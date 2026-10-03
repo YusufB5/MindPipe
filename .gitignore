@@ -1,0 +1,28 @@
+# Node dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build outputs
+dist/
+dist-ssr/
+
+# Tauri & Rust build outputs (gigabytes of build artifacts)
+src-tauri/target/
+src-tauri/gen/schemas/
+target/
+
+# Local MCP runtime session & logs (user-specific local runtime data)
+mcp-session.json
+mcp-permissions.json
+mcp-log.json
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
