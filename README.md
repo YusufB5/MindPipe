@@ -2,92 +2,99 @@
 
 [English](#english) | [Türkçe](#türkçe)
 
+<p align="center">
+  <img src="readmee-app-pics/EN/EN-main.png" alt="MindPipe Dashboard" width="900" />
+</p>
+
 ---
 
 <a name="english"></a>
 ## English
 
-MindPipe is a lightweight, local-first desktop application and AI context bridge built with Tauri, Rust, and React. It serves as an instant capture tool, visual project dashboard, and real-time knowledge provider for AI agents via the Model Context Protocol (MCP).
+MindPipe is a lightweight, local-first desktop devlog station and AI context bridge built with Tauri v2, Rust, and React. It functions as an instant capture tool, a chronological DevLog stream, an integrated task manager, and a real-time knowledge provider for AI agents via the Model Context Protocol (MCP).
 
-All data is stored directly on your file system as plain Markdown (`.md`) and standard image (`.png`) files. There are no proprietary databases, no cloud synchronization requirements, and zero telemetry.
+All data is stored directly on your local file system as plain Markdown (`.md`) and standard PNG (`.png`) files. There is no cloud lock-in, no telemetry, and no proprietary database format.
+
+---
+
+### Showcase
+
+| Global Quick Capture (`Ctrl+Shift+N`) | Built-in MCP Control Panel & Firewall |
+| :---: | :---: |
+| <img src="readmee-app-pics/EN/pipe-en.png" alt="Quick Capture Pipe" width="420" /> | <img src="readmee-app-pics/EN/EN-mcp.png" alt="MCP Control Panel" width="420" /> |
+
+| Settings, Customizable Shortcuts & Themes | Continuous DevLog Stream & Tasks |
+| :---: | :---: |
+| <img src="readmee-app-pics/EN/settings.png" alt="Settings & Themes" width="420" /> | <img src="readmee-app-pics/EN/EN-main.png" alt="Main Dashboard" width="420" /> |
+
+---
 
 ### Features
 
-- **Global Quick Capture (`Ctrl+Shift+N`):** Open a minimalist capture overlay from anywhere in the operating system. Type quick notes or paste screenshots directly from the clipboard (`Win+Shift+S` then `Ctrl+V`), select a project, and press Enter to save. The capture window hides automatically when it loses focus or on `Escape`.
-- **Project Organization:** Manage isolated workspaces. Easily create projects, delete them, or open project folders in the native file explorer.
-- **Notes & Media Stream:**
-  - View chronologically ordered notes and screenshots.
-  - Pin important reference notes to keep them permanently at the top.
-  - Newly added notes automatically appear right beneath pinned notes.
+- **Global Quick Capture (`Ctrl+Shift+N`):**
+  - Summon a minimalist capture bar from anywhere in the OS via a global hotkey.
+  - Type quick thoughts or paste multiple screenshots directly from the clipboard (`Win+Shift+S` then `Ctrl+V`).
+  - Shortcut is fully customizable (e.g. `Alt+Space`, `Ctrl+Alt+N`) and persists across reboots.
+- **Continuous DevLog Stream:**
+  - Chronological activity feed with inline Markdown editing (`Ctrl+S`).
+  - Pin important reference notes permanently to the top.
+  - Collapsible cards for long logs (`Read more` / `Show less`).
   - Drag-and-drop manual card reordering, saved per project (`.order.json`).
-  - Built-in note editor with instant Markdown editing and keyboard shortcut (`Ctrl+S`).
-  - Fullscreen image lightbox for captured screenshots with multi-image thumbnail support.
-- **Integrated Task Management (TODOs):**
-  - Project-level task lists stored in plain text (`todos.md`).
-  - Separate pending and completed task sections.
-  - One-click task completion toggling and deletion.
-- **Search System:**
-  - Real-time search across note contents, file names, and project titles.
-  - Filter search scope between the current project or all projects.
-- **AI Context Export:**
-  - One-click export of an LLM-optimized Markdown context bundle containing project guidelines, pinned notes, active tasks, and chronological entries.
-- **Model Context Protocol (MCP) Bridge:**
+  - Full-size image lightbox with multi-screenshot gallery reels.
+  - Direct image pasting into the "+ Add Note" form on the dashboard.
+- **Project Organization & Tasks (TODOs):**
+  - Clean workspaces for your codebases, ideas, and devlogs.
+  - Project task management stored in human-readable plain text (`todos.md`).
+  - Separate pending and completed lists with live task counter badges.
+  - One-click native folder access in File Explorer.
+- **Embedded Model Context Protocol (MCP) Server:**
   - Independent JSON-RPC 2.0 stdio server (`mcp-server.cjs`).
-  - Allows AI agents (Antigravity, Claude Desktop, Cursor, Codex) to read project context, list projects, search notes, create projects, write notes, edit entries, and manage tasks.
-  - Non-intrusive background file watcher providing real-time live synchronization between external AI agent modifications and the desktop interface.
-  - AI attribution indicator showing which projects, notes, and tasks were created or modified by AI agents.
+  - The binary automatically extracts `mcp-server.cjs` to your user AppData directory on launch.
+  - Connects seamlessly to Claude Desktop, Cursor, Antigravity, Codex, and Windsurf.
+  - Non-intrusive background file watcher providing real-time live synchronization between external AI modifications and the desktop UI.
+  - Visual AI sparkle badge identifying projects, notes, and tasks created or managed by AI models.
 - **Granular Security Firewall & Permissions:**
-  - Project-based access control: toggle AI agent read/write access per project with one click.
-  - Action scoping: configure AI agent edit and delete permissions (`only_ai` created items, `all` items, or `none`).
-  - Live activity logging and connected client detection.
+  - Per-project access control: toggle AI read/write access per project with one click.
+  - Permission scoping: configure AI edit and delete rights (`only_ai` created items, `all` items, or `none`).
+  - Live activity pulse and audit log feed.
+- **6 Color Themes & Custom Scrollbars:**
+  - Dark Themes: Amber Dark (Default), OLED Midnight, Emerald Forest, Slate Minimal.
+  - Light Themes: Paper Light (Warm Cream & Amber), Nordic Frost (Cool Grey & Sky Blue).
+  - Modern sleek custom scrollbars matching the active theme palette.
+- **Bilingual Localization:**
+  - Switch between English and Turkish in real-time from the Settings menu.
+
+---
 
 ### Architecture
 
-- **Backend:** Rust (Tauri v2), handling global shortcuts, system tray lifecycle, native file I/O, window management, and background file state change notifications.
-- **Frontend:** React with TypeScript and Vite, styled with custom zero-dependency dark theme CSS.
-- **MCP Server:** Node.js script communicating over standard input/output (stdio), completely decoupled from the graphical user interface.
-- **Storage Location:** `%APPDATA%/com.notesdashboard.app/projects/<project>/` (Windows) or `~/.config/com.notesdashboard.app/projects/<project>/` (Linux).
+- **Backend:** Rust (Tauri v2), handling global shortcuts, native file I/O, system tray lifecycle, and cross-platform window management.
+- **Frontend:** React 18, TypeScript, Vite, with zero external UI framework dependencies.
+- **MCP Server:** Embedded Node.js script communicating via standard input/output (`stdio`).
+- **Storage Location:**
+  - Windows: `%APPDATA%\com.notesdashboard.app\projects\<project>\`
+  - macOS: `~/Library/Application Support/com.notesdashboard.app/projects/<project>/`
+  - Linux: `~/.config/com.notesdashboard.app/projects/<project>/`
 
-### Prerequisites
+---
 
-- Node.js 18+
-- Rust (stable toolchain via rustup)
-- Platform build dependencies: [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)
+### MCP Configuration
 
-### Development
+You can copy your pre-filled, personal configuration snippet directly by opening MindPipe and clicking the MCP Status bar on the bottom-left.
 
-```bash
-# Install frontend dependencies
-npm install
-
-# Run application in development mode
-npm run tauri dev
-```
-
-### Production Build
-
-```bash
-# Build production desktop binary and installers
-npm run tauri build
-```
-
-Compiled binaries and installers will be located in `src-tauri/target/release/` and `src-tauri/target/release/bundle/`.
-
-### MCP Agent Configuration
-
-Add MindPipe to your AI agent configuration:
-
-**Standard JSON (Antigravity, Claude Desktop, Cursor):**
-- Antigravity: `~/.gemini/config/mcp_config.json`
+**Standard JSON (Claude Desktop, Cursor, Antigravity, Windsurf):**
 - Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json`
 - Cursor: `~/.cursor/mcp.json`
+- Antigravity: `~/.gemini/config/mcp_config.json`
 
 ```json
 {
   "mcpServers": {
     "mindpipe": {
       "command": "node",
-      "args": ["<PATH_TO_MINDPIPE>/mcp-server.cjs"]
+      "args": [
+        "C:\\Users\\<YOUR_USERNAME>\\AppData\\Roaming\\com.notesdashboard.app\\mcp-server.cjs"
+      ]
     }
   }
 }
@@ -99,95 +106,111 @@ Add MindPipe to your AI agent configuration:
 ```toml
 [mcp_servers.mindpipe]
 command = "node"
-args = ['<PATH_TO_MINDPIPE>/mcp-server.cjs']
+args = ['C:\Users\<YOUR_USERNAME>\AppData\Roaming\com.notesdashboard.app\mcp-server.cjs']
 ```
+
+---
+
+### Development & Build
+
+#### Prerequisites
+- Node.js 18+
+- Rust (stable toolchain via `rustup`)
+- [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)
+
+#### Development
+```bash
+# Install dependencies
+npm install
+
+# Run in development mode
+npm run tauri dev
+```
+
+#### Production Build
+```bash
+# Compile optimized desktop binary and installers (EXE / MSI)
+npm run tauri build
+```
+Compiled outputs will be located in `src-tauri/target/release/bundle/nsis/` and `src-tauri/target/release/bundle/msi/`.
 
 ---
 
 <a name="türkçe"></a>
 ## Türkçe
 
-MindPipe, Tauri, Rust ve React ile geliştirilmiş, yerel öncelikli (local-first) bir masaüstü bilgi paneli ve yapay zeka bağlam köprüsüdür. Hem hızlı bir not ve ekran görüntüsü yakalama aracı, hem görsel bir proje yönetim paneli, hem de Model Context Protocol (MCP) üzerinden yapay zeka ajanlarına (AI agents) doğrudan yapılandırılmış proje bağlamı sağlayan bir altyapıdır.
+MindPipe, Tauri v2, Rust ve React ile geliştirilmiş, hafif ve yerel öncelikli (local-first) bir devlog istasyonu ve yapay zeka bağlam köprüsüdür. Hem hızlı bir not ve ekran görüntüsü yakalama aracı, hem kronolojik bir DevLog akışı, hem entegre bir görev yöneticisi, hem de Model Context Protocol (MCP) üzerinden yapay zeka ajanlarına doğrudan yapılandırılmış proje bilgisi aktaran bir terminaldir.
 
-Tüm veriler doğrudan dosya sisteminizde düz Markdown (`.md`) ve standart görsel (`.png`) dosyaları olarak saklanır. Özel veritabanı formatları, harici bulut bağımlılığı ve telemetri takibi yoktur.
+Tüm veriler doğrudan yerel dosya sisteminizde düz Markdown (`.md`) ve standart görsel (`.png`) dosyaları olarak tutulur. Bulut zorunluluğu, telemetri takibi ve kapalı veritabanı formatları bulunmaz.
+
+---
+
+### Ekran Görüntüleri
+
+| Global Hızlı Yakalama (`Ctrl+Shift+N`) | Entegre MCP Denetim Masası & Güvenlik Duvarı |
+| :---: | :---: |
+| <img src="readmee-app-pics/TR/pipe.png" alt="Hızlı Yakalama Penceresi" width="420" /> | <img src="readmee-app-pics/TR/MCP-TR.png" alt="MCP Denetim Masası" width="420" /> |
+
+| Ayarlar, Özelleştirilebilir Kısayollar & Temalar | DevLog Akışı & Görev Panosu |
+| :---: | :---: |
+| <img src="readmee-app-pics/TR/TR-settings.png" alt="Ayarlar ve Temalar" width="420" /> | <img src="readmee-app-pics/TR/TR-main.png" alt="Ana Pano" width="420" /> |
+
+---
 
 ### Özellikler
 
-- **Global Hızlı Yakalama (`Ctrl+Shift+N`):** İşletim sisteminin herhangi bir yerindeyken tek kısayolla minimalist yakalama penceresini açın. Not yazın veya panodaki ekran alıntısını yapıştırın (`Win+Shift+S` ardından `Ctrl+V`), hedef projeyi seçip Enter'a basın. Odak kaybedildiğinde veya `Escape` tuşuna basıldığında otomatik olarak gizlenir.
-- **Proje Organizasyonu:** Çalışmalarınızı izole projelere ayırın. Kolayca yeni proje oluşturun, silin veya proje klasörünü doğrudan dosya gezgininde açın.
-- **Not ve Medya Akışı:**
-  - Kronolojik not ve ekran görüntüsü akışı.
-  - Önemli notları ve yönergeleri en üstte tutmak için sabitleme (pin) desteği.
-  - Yeni eklenen notlar otomatik olarak sabitlenen notların hemen altında, akışın en üstünde konumlanır.
-  - Sürükle-bırak yöntemiyle serbest kart sıralama; sıralama proje bazında (`.order.json`) saklanır.
-  - Dahili Markdown düzenleyici ve hızlı kaydetme kısayolu (`Ctrl+S`).
-  - Ekran alıntıları için tam ekran görsel lightbox görüntüleyicisi ve çoklu görsel desteği.
-- **Entegre Görev Yönetimi (Yapılacaklar Listesi):**
-  - Proje düzeyinde görev listesi düz metin dosyasında saklanır (`todos.md`).
-  - Bekleyen ve tamamlanan görevler ayrılmış listelerde gösterilir.
-  - Tek tıkla durum değiştirme (tamamlandı/bekliyor) ve görev silme.
-- **Arama Sistemi:**
-  - Not içerikleri, dosya adları ve proje başlıkları üzerinde anlık arama.
-  - Aramayı mevcut proje ile sınırlandırma veya tüm projeleri kapsama seçeneği.
-- **AI Bağlamı Dışa Aktarma:**
-  - Tek tıkla büyük dil modellerine (LLM) doğrudan verilebilecek standart bir Markdown bağlam çıktısı kopyalama.
-- **Model Context Protocol (MCP) Köprüsü:**
+- **Global Hızlı Yakalama (`Ctrl+Shift+N`):**
+  - İşletim sisteminin herhangi bir yerindeyken tek tuşla minimalist yakalama penceresini açın.
+  - Hızlı notlar yazın veya panodaki ekran alıntılarını doğrudan yapıştırın (`Win+Shift+S` ardından `Ctrl+V`).
+  - Global kısayol Ayarlar menüsünden tamamen özelleştirilebilir (`Alt+Space`, `Ctrl+Alt+N` vb.).
+- **DevLog Sürekli Akışı:**
+  - Kronolojik not akışı ve satır içi anlık Markdown düzenleme (`Ctrl+S`).
+  - Önemli notları ve yönergeleri en üstte sabitleme (pin) desteği.
+  - Uzun notlar için daraltma (`Devamını Gör` / `Daha az göster`).
+  - Sürükle-bırak ile serbest kart sıralama (proje bazında `.order.json` dosyasında saklanır).
+  - Çoklu ekran alıntıları için tam ekran görsel lightbox büyütücüsü.
+  - Ana pano üzerindeki "+ Not Ekle" alanında doğrudan panodan görsel yapıştırma (`Ctrl+V`).
+- **Proje Organizasyonu ve Görevler (TODOs):**
+  - Projelerinizi ayrı çalışma alanlarında izole edin.
+  - Düz metin dosyasında tutulan görev listesi (`todos.md`).
+  - Bekleyen ve tamamlanan görevler için ayrılmış sekmeler ve sayaçlar.
+  - Tek tıkla yerel klasörü Dosya Gezgini'nde açma.
+- **Gömülü Model Context Protocol (MCP) Sunucusu:**
   - Bağımsız JSON-RPC 2.0 stdio sunucusu (`mcp-server.cjs`).
-  - Yapay zeka ajanlarının (Antigravity, Claude Desktop, Cursor, Codex) projeleri listelemesine, bağlam okumasına, arama yapmasına, proje açmasına, not yazmasına, düzenlemesine ve görevleri yönetmesine olanak tanır.
-  - Arka planda çalışan hafif dosya izleyici sayesinde AI ajanlarının yaptığı değişiklikler masaüstü arayüzüne anlık ve canlı olarak yansır.
-  - AI ajanlarının oluşturduğu proje, not ve görevlerde görsel AI mikroçip rozeti ile şeffaf kaynak takibi.
-- **Güvenlik Duvarı ve İzin Denetimi:**
-  - Proje bazlı erişim denetimi: AI ajanlarının hangi projelere erişebileceğini tek tıkla açıp kapatabilme.
-  - Yetki kapsamı belirleme: not düzenleme ve silme yetkilerini sınırlama (sadece AI'ın kendi ürettiği içerikler, tüm içerikler veya salt okunur).
-  - Canlı istemci algılama ve işlem geçmişi log takibi.
+  - Program ilk açılışta `mcp-server.cjs` dosyasını kullanıcının AppData klasörüne otomatik çıkartır.
+  - Claude Desktop, Cursor, Antigravity, Codex ve Windsurf ile anında tam uyum.
+  - Arka planda çalışan hafif dosya izleyici ile yapay zekanın yaptığı değişiklikler masaüstü panosuna canlı yansır.
+  - AI ajanlarının ürettiği notlarda ve görevlerde görsel AI mikroçip rozeti ile şeffaf kaynak takibi.
+- **Güvenlik Duvarı ve İzin Yönetimi:**
+  - Proje bazlı erişim denetimi: AI modellerinin hangi projelere erişebileceğini tek tıkla açıp kapatın.
+  - Yetki kapsamı: not düzenleme ve silme sınırlarını belirleyin (sadece AI'ın kendi ürettikleri, tümü veya salt okunur).
+  - Canlı işlem nabzı ve işlem geçmişi denetim günlüğü.
+- **6 Renk Teması & Dinamik Kaydırma Çubukları:**
+  - Karanlık Temalar: Amber Dark (Varsayılan), OLED Midnight, Emerald Forest, Slate Minimal.
+  - Açık Temalar: Paper Light (Sıcak Kağıt & Amber), Nordic Frost (Ferah Gri & Kutup Mavisi).
+  - Seçilen temaya göre otomatik renk alan modern ve ince kaydırma çubukları.
+- **Çift Dil Desteği:**
+  - Ayarlar menüsünden Türkçe ve İngilizce dilleri arasında anında geçiş yapın.
 
-### Mimari
+---
 
-- **Backend:** Rust (Tauri v2); sistem kısayollarını, sistem çekmecesini (tray), dosya I/O operasyonlarını, pencere yönetimini ve arka plan dosya izleyicisini yönetir.
-- **Frontend:** TypeScript ve React; harici ağır UI kütüphaneleri olmadan optimize edilmiş özel CSS ile çalışır.
-- **MCP Sunucusu:** Node.js ile yazılmış, standart girdi/çıktı (stdio) üzerinden çalışan ve masaüstü arayüzünden bağımsız çalışabilen servis.
-- **Veri Depolama Konumu:** `%APPDATA%/com.notesdashboard.app/projects/<proje>/` (Windows) veya `~/.config/com.notesdashboard.app/projects/<proje>/` (Linux).
+### MCP Yapılandırması
 
-### Gereksinimler
+MindPipe'ı açıp sol alttaki MCP Durum çubuğuna tıkladığınızda sisteminize özel hazır JSON kodunu tek tıkla kopyalayabilirsiniz.
 
-- Node.js 18+
-- Rust (rustup ile güncel stable sürüm)
-- Platform derleme bağımlılıkları: [Tauri Başlangıç Kılavuzu](https://v2.tauri.app/start/prerequisites/)
-
-### Geliştirme Ortamı
-
-```bash
-# Bağımlılıkları yükleyin
-npm install
-
-# Geliştirme modunda çalıştırın
-npm run tauri dev
-```
-
-### Üretim Derlemesi (Build)
-
-```bash
-# Bağımsız exe ve kurulum paketlerini derleyin
-npm run tauri build
-```
-
-Derlenen çalıştırılabilir dosya ve kurulum paketleri `src-tauri/target/release/` ve `src-tauri/target/release/bundle/` dizinlerinde üretilir.
-
-### MCP Ajan (Agent) Yapılandırması
-
-MindPipe'ı kullandığınız AI ajanına bağlamak için ilgili ayar dosyasına ekleyin:
-
-**Standart JSON (Antigravity, Claude Desktop, Cursor):**
-- Antigravity: `~/.gemini/config/mcp_config.json`
+**Standart JSON (Claude Desktop, Cursor, Antigravity, Windsurf):**
 - Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json`
 - Cursor: `~/.cursor/mcp.json`
+- Antigravity: `~/.gemini/config/mcp_config.json`
 
 ```json
 {
   "mcpServers": {
     "mindpipe": {
       "command": "node",
-      "args": ["<MINDPİPE_KLASORU>/mcp-server.cjs"]
+      "args": [
+        "C:\\Users\\<KULLANICI_ADINIZ>\\AppData\\Roaming\\com.notesdashboard.app\\mcp-server.cjs"
+      ]
     }
   }
 }
@@ -199,5 +222,35 @@ MindPipe'ı kullandığınız AI ajanına bağlamak için ilgili ayar dosyasına
 ```toml
 [mcp_servers.mindpipe]
 command = "node"
-args = ['<MINDPİPE_KLASORU>/mcp-server.cjs']
+args = ['C:\Users\<KULLANICI_ADINIZ>\AppData\Roaming\com.notesdashboard.app\mcp-server.cjs']
 ```
+
+---
+
+### Geliştirme ve Derleme
+
+#### Gereksinimler
+- Node.js 18+
+- Rust (rustup ile güncel stable sürüm)
+- [Tauri Başlangıç Kılavuzu](https://v2.tauri.app/start/prerequisites/)
+
+#### Geliştirme Ortamı
+```bash
+# Bağımlılıkları yükleyin
+npm install
+
+# Geliştirme modunda çalıştırın
+npm run tauri dev
+```
+
+#### Üretim Derlemesi (Build)
+```bash
+# Optimize edilmiş EXE ve kurulum paketlerini derleyin
+npm run tauri build
+```
+Derleme çıktıları `src-tauri/target/release/bundle/nsis/` ve `src-tauri/target/release/bundle/msi/` klasörlerinde üretilir.
+
+---
+
+### Lisans
+MIT License.

@@ -21,6 +21,7 @@ mcp-log.json
 # OS & Editor files
 .DS_Store
 Thumbs.db
+desktop.ini
 .vscode/
 .idea/
 *.swp
