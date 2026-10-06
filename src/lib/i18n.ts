@@ -1,5 +1,5 @@
 export type Language = "tr" | "en";
-export type ThemeId = "amber" | "oled" | "emerald" | "slate";
+export type ThemeId = "amber" | "oled" | "emerald" | "slate" | "paper" | "nordic";
 
 export const translations = {
   tr: {
@@ -85,6 +85,10 @@ export const translations = {
     themeEmeraldDesc: "Koyu zümrüt yeşili ve modern matrix havası",
     themeSlate: "Slate Minimal",
     themeSlateDesc: "Soğuk mavi-gri ve sade karanlık tema",
+    themePaper: "Paper Light",
+    themePaperDesc: "Sıcak krem-kağıt zemin ve kehribar dokunuşlar",
+    themeNordic: "Nordic Frost",
+    themeNordicDesc: "Ferah açık gri zemin ve kutup mavisi vurgular",
 
     // Shortcuts List
     shortcutQuickCapture: "Hızlı Not ve Ekran Görüntüsü Yakalama (Pipe)",
@@ -240,6 +244,10 @@ export const translations = {
     themeEmeraldDesc: "Dark emerald green with a modern cyber aesthetic",
     themeSlate: "Slate Minimal",
     themeSlateDesc: "Cool blue-grey minimal dark theme",
+    themePaper: "Paper Light",
+    themePaperDesc: "Warm cream-paper background with amber highlights",
+    themeNordic: "Nordic Frost",
+    themeNordicDesc: "Crisp cool light-grey background with arctic blue accents",
 
     // Shortcuts List
     shortcutQuickCapture: "Quick Note & Screenshot Capture (Pipe)",
@@ -322,7 +330,14 @@ export function getInitialLanguage(): Language {
 
 export function getInitialTheme(): ThemeId {
   const saved = localStorage.getItem("mindpipe_theme");
-  if (saved === "amber" || saved === "oled" || saved === "emerald" || saved === "slate") {
+  if (
+    saved === "amber" ||
+    saved === "oled" ||
+    saved === "emerald" ||
+    saved === "slate" ||
+    saved === "paper" ||
+    saved === "nordic"
+  ) {
     return saved;
   }
   return "amber";

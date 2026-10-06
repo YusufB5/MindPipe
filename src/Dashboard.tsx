@@ -12,6 +12,7 @@ import {
   openProjectFolder,
   readNote,
   saveNote,
+  saveCapture,
   updateNote,
   searchEntries,
   attachImageToEntry,
@@ -150,6 +151,7 @@ export default function Dashboard() {
   // Direct new note modal state
   const [isCreatingNote, setIsCreatingNote] = useState(false);
   const [newNoteContent, setNewNoteContent] = useState("");
+  const [newNoteImages, setNewNoteImages] = useState<string[]>([]);
 
   // Lightbox state for full-size image viewing
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -794,12 +796,24 @@ export default function Dashboard() {
     }
   }
 
-  async function handleCreateDirectNote(e: React.FormEvent) {
-    e.preventDefault();
-    if (!newNoteContent.trim()) return;
+  async function handleCreateDirectNote(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    const hasImages = newNoteImages.length > 0;
+    const trimmed = newNoteContent.trim();
+    if (!hasImages && !trimmed) return;
     try {
-      await saveNote(active, newNoteContent.trim());
+      if (hasImages) {
+        const strippedImages = newNoteImages.map((img) => stripDataUrlPrefix(img));
+        await saveCapture(
+          active,
+          trimmed.length > 0 ? trimmed : undefined,
+          strippedImages
+        );
+      } else {
+        await saveNote(active, trimmed);
+      }
       setNewNoteContent("");
+      setNewNoteImages([]);
       setIsCreatingNote(false);
       await refreshEntries(active);
     } catch (err) {
@@ -829,6 +843,8 @@ export default function Dashboard() {
         }
         if (isCreatingNote) {
           setIsCreatingNote(false);
+          setNewNoteContent("");
+          setNewNoteImages([]);
           return;
         }
         if (searchQuery) {
@@ -842,6 +858,15 @@ export default function Dashboard() {
       }
       if (
         (e.ctrlKey || e.metaKey) &&
+        e.key === "Enter" &&
+        isCreatingNote
+      ) {
+        e.preventDefault();
+        handleCreateDirectNote();
+        return;
+      }
+      if (
+        (e.ctrlKey || e.metaKey) &&
         e.key === "s" &&
         editingEntry &&
         (editingEntry.kind === "note" || editingEntry.kind === "mixed")
@@ -851,7 +876,19 @@ export default function Dashboard() {
       }
     }
 
+    let lastPasteTime = 0;
     async function onWindowPaste(e: ClipboardEvent) {
+      if (isCreatingNote) {
+        const now = Date.now();
+        if (now - lastPasteTime < 350) return;
+        const dataUrl = await extractImageFromPasteEvent(e);
+        if (dataUrl) {
+          lastPasteTime = Date.now();
+          e.preventDefault();
+          setNewNoteImages((prev) => [...prev, dataUrl]);
+          return;
+        }
+      }
       if (inlineEditingPath) {
         const dataUrl = await extractImageFromPasteEvent(e);
         if (dataUrl) {
@@ -897,7 +934,7 @@ export default function Dashboard() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("paste", onWindowPaste);
     };
-  }, [editingEntry, editorContent, lightboxImage, isCreatingNote, searchQuery, active, inlineEditingPath, isSettingsOpen, isMcpModalOpen]);
+  }, [editingEntry, editorContent, lightboxImage, isCreatingNote, newNoteImages, newNoteContent, searchQuery, active, inlineEditingPath, isSettingsOpen, isMcpModalOpen]);
 
   return (
     <div className="dashboard">
@@ -1087,7 +1124,11 @@ export default function Dashboard() {
                 <button
                   type="button"
                   className="btn btn--primary dashboard__add-btn"
-                  onClick={() => setIsCreatingNote(true)}
+                  onClick={() => {
+                    setIsCreatingNote(true);
+                    setNewNoteContent("");
+                    setNewNoteImages([]);
+                  }}
                   title={`${t("addNoteBtn")} (Ctrl+Shift+N)`}
                 >
                   {t("addNoteBtn")}
@@ -1317,20 +1358,47 @@ export default function Dashboard() {
                     onChange={(e) => setNewNoteContent(e.target.value)}
                     autoFocus
                   />
-                  <div className="dashboard__quick-note-actions">
-                    <button type="submit" className="btn btn--primary">
-                      {t("save")}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--secondary"
-                      onClick={() => {
-                        setIsCreatingNote(false);
-                        setNewNoteContent("");
-                      }}
-                    >
-                      {t("cancel")}
-                    </button>
+
+                  {newNoteImages.length > 0 && (
+                    <div className="dashboard__quick-note-images">
+                      {newNoteImages.map((img, idx) => (
+                        <div key={idx} className="dashboard__quick-note-image-chip">
+                          <img src={img} alt={`Görsel ${idx + 1}`} />
+                          <button
+                            type="button"
+                            className="dashboard__quick-note-image-remove"
+                            title={lang === "tr" ? "Görseli Kaldır" : "Remove Image"}
+                            onClick={() => setNewNoteImages((prev) => prev.filter((_, i) => i !== idx))}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="dashboard__quick-note-footer">
+                    <span className="dashboard__quick-note-hint">
+                      {lang === "tr"
+                        ? "💡 Görselleri doğrudan Ctrl+V ile yapıştırabilirsiniz"
+                        : "💡 You can paste images directly with Ctrl+V"}
+                    </span>
+                    <div className="dashboard__quick-note-actions">
+                      <button type="submit" className="btn btn--primary">
+                        {t("save")}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--secondary"
+                        onClick={() => {
+                          setIsCreatingNote(false);
+                          setNewNoteContent("");
+                          setNewNoteImages([]);
+                        }}
+                      >
+                        {t("cancel")}
+                      </button>
+                    </div>
                   </div>
                 </form>
               )}
@@ -2248,6 +2316,36 @@ export default function Dashboard() {
                         <div className="settings-card__info">
                           <span className="settings-card__title">{t("themeSlate")}</span>
                           <span className="settings-card__desc">{t("themeSlateDesc")}</span>
+                        </div>
+                      </div>
+
+                      {/* Paper Light */}
+                      <div
+                        className={`settings-card ${theme === "paper" ? "settings-card--active" : ""}`}
+                        onClick={() => handleThemeChange("paper")}
+                      >
+                        <div
+                          className="settings-theme-swatch"
+                          style={{ background: "linear-gradient(135deg, #f8f6f0 50%, #d97706 50%)" }}
+                        />
+                        <div className="settings-card__info">
+                          <span className="settings-card__title">{t("themePaper")}</span>
+                          <span className="settings-card__desc">{t("themePaperDesc")}</span>
+                        </div>
+                      </div>
+
+                      {/* Nordic Frost */}
+                      <div
+                        className={`settings-card ${theme === "nordic" ? "settings-card--active" : ""}`}
+                        onClick={() => handleThemeChange("nordic")}
+                      >
+                        <div
+                          className="settings-theme-swatch"
+                          style={{ background: "linear-gradient(135deg, #f4f6fa 50%, #2563eb 50%)" }}
+                        />
+                        <div className="settings-card__info">
+                          <span className="settings-card__title">{t("themeNordic")}</span>
+                          <span className="settings-card__desc">{t("themeNordicDesc")}</span>
                         </div>
                       </div>
                     </div>
