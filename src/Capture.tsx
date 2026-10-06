@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createProject, listProjects, saveCapture } from "./lib/api";
 import { extractImageFromPasteEvent, stripDataUrlPrefix } from "./lib/clipboardImage";
+import {
+  applyTheme,
+  getInitialLanguage,
+  getInitialTheme,
+  translations,
+  type Language,
+} from "./lib/i18n";
 
 const appWindow = getCurrentWindow();
 
@@ -22,6 +29,7 @@ function setStoredProject(p: string) {
 }
 
 export default function Capture() {
+  const [lang, setLang] = useState<Language>(getInitialLanguage);
   const [projects, setProjects] = useState<string[]>([]);
   const [project, setProject] = useState<string>(getStoredProject);
   const [text, setText] = useState("");
@@ -85,12 +93,16 @@ export default function Capture() {
     setNewProjectName("");
   }
 
-  // Reload projects and reset capture state whenever window gains focus
+  // Reload projects, sync theme/lang and reset capture state whenever window gains focus
   useEffect(() => {
+    applyTheme(getInitialTheme());
+    setLang(getInitialLanguage());
     loadProjects();
 
     const unlisten = appWindow.onFocusChanged(({ payload: focused }) => {
       if (focused) {
+        applyTheme(getInitialTheme());
+        setLang(getInitialLanguage());
         loadProjects();
         reset();
         setTimeout(() => textareaRef.current?.focus(), 50);
@@ -191,18 +203,18 @@ export default function Capture() {
                 ref={newProjectInputRef}
                 type="text"
                 className="capture__new-project-input"
-                placeholder="Yeni proje adı..."
+                placeholder={lang === "tr" ? "Yeni proje adı..." : "New project name..."}
                 value={newProjectName}
                 onChange={(e) => setNewProjectName(e.target.value)}
                 autoFocus
               />
-              <button type="submit" className="capture__new-project-btn-ok" title="Projeyi Oluştur">
+              <button type="submit" className="capture__new-project-btn-ok" title={lang === "tr" ? "Projeyi Oluştur" : "Create Project"}>
                 ✓
               </button>
               <button
                 type="button"
                 className="capture__new-project-btn-cancel"
-                title="İptal (Esc)"
+                title={lang === "tr" ? "İptal (Esc)" : "Cancel (Esc)"}
                 onClick={() => {
                   setIsCreatingProject(false);
                   setNewProjectName("");
@@ -232,12 +244,12 @@ export default function Capture() {
                     {p}
                   </option>
                 ))}
-                <option value="__create__">+ Yeni Proje...</option>
+                <option value="__create__">{lang === "tr" ? "+ Yeni Proje..." : "+ New Project..."}</option>
               </select>
               <button
                 type="button"
                 className="capture__create-proj-btn"
-                title="Yeni Proje Oluştur"
+                title={lang === "tr" ? "Yeni Proje Oluştur" : "Create New Project"}
                 onClick={() => setIsCreatingProject(true)}
               >
                 +
@@ -259,7 +271,7 @@ export default function Capture() {
                 <button
                   type="button"
                   className="capture__attachment-chip-remove"
-                  title="Görseli Kaldır"
+                  title={lang === "tr" ? "Görseli Kaldır" : "Remove Image"}
                   onClick={() => handleRemoveImage(idx)}
                 >
                   ✕
@@ -267,7 +279,7 @@ export default function Capture() {
               </div>
             ))}
             <span className="capture__attachments-count">
-              {images.length} görsel
+              {translations[lang].captureImagesCount(images.length)}
             </span>
           </div>
         )}
@@ -277,8 +289,8 @@ export default function Capture() {
           className={`capture__textarea ${images.length > 0 ? "capture__textarea--compact" : ""}`}
           placeholder={
             images.length > 0
-              ? "Açıklama notu ekle (Enter: Hepsini Kaydet)..."
-              : "Bir şey yaz ya da ekran görüntüsü yapıştır (birden fazla yapıştırabilirsiniz)..."
+              ? translations[lang].captureDescPlaceholder
+              : translations[lang].capturePlaceholder
           }
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -288,13 +300,13 @@ export default function Capture() {
 
         <div className="capture__hint">
           <span>
-            <kbd>Enter</kbd> kaydet
+            <kbd>Enter</kbd> {translations[lang].captureEnter}
           </span>
           <span>
-            <kbd>Shift+Enter</kbd> yeni satır
+            <kbd>Shift+Enter</kbd> {translations[lang].captureShiftEnter}
           </span>
           <span>
-            <kbd>Esc</kbd> kapat
+            <kbd>Esc</kbd> {translations[lang].captureEsc}
           </span>
         </div>
       </div>

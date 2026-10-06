@@ -201,5 +201,16 @@ export function clearMcpLogs(): Promise<void> {
   return invoke("clear_mcp_logs");
 }
 
+/** Gets the currently registered global shortcut for the Pipe capture window. */
+export function getCaptureShortcut(): Promise<string> {
+  return invoke("get_capture_shortcut");
+}
+
+/** Updates the global capture shortcut. Returns the registered shortcut string or throws on failure. */
+export function updateCaptureShortcut(newShortcut: string): Promise<string> {
+  return invoke("update_capture_shortcut", { newShortcut });
+}
+
+
 
 

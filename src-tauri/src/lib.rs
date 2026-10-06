@@ -11,6 +11,33 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 
 const CAPTURE_SHORTCUT: &str = "Ctrl+Shift+N";
+const EMBEDDED_MCP_SERVER: &str = include_str!("../../mcp-server.cjs");
+
+fn ensure_mcp_server(app_dir: &std::path::Path) {
+    let target = app_dir.join("mcp-server.cjs");
+    let needs_write = match fs::read_to_string(&target) {
+        Ok(existing) => existing != EMBEDDED_MCP_SERVER,
+        Err(_) => true,
+    };
+    if needs_write {
+        let _ = fs::write(target, EMBEDDED_MCP_SERVER);
+    }
+}
+
+fn get_saved_capture_shortcut(app_dir: &std::path::Path) -> String {
+    let settings_path = app_dir.join("shortcuts.json");
+    if let Ok(content) = fs::read_to_string(&settings_path) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(s) = val.get("captureShortcut").and_then(|v| v.as_str()) {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
+    }
+    CAPTURE_SHORTCUT.to_string()
+}
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -984,7 +1011,10 @@ fn get_mcp_status(app: AppHandle) -> Result<McpStatus, String> {
         Vec::new()
     };
 
+    ensure_mcp_server(app_dir);
+
     let mut candidates: Vec<PathBuf> = Vec::new();
+    candidates.push(app_dir.join("mcp-server.cjs"));
     if let Ok(cwd) = std::env::current_dir() {
         candidates.push(cwd.join("mcp-server.cjs"));
         if let Some(parent) = cwd.parent() {
@@ -994,7 +1024,6 @@ fn get_mcp_status(app: AppHandle) -> Result<McpStatus, String> {
     if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
         candidates.push(exe_dir.join("mcp-server.cjs"));
     }
-    candidates.push(app_dir.join("mcp-server.cjs"));
 
     let server_script_path = candidates
         .into_iter()
@@ -1111,6 +1140,47 @@ fn clear_mcp_logs(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn get_capture_shortcut(app: AppHandle) -> Result<String, String> {
+    let root = projects_root(&app)?;
+    let app_dir = root.parent().unwrap_or(&root);
+    Ok(get_saved_capture_shortcut(app_dir))
+}
+
+#[tauri::command]
+fn update_capture_shortcut(app: AppHandle, new_shortcut: String) -> Result<String, String> {
+    let clean = new_shortcut.trim();
+    if clean.is_empty() {
+        return Err("Kısayol boş bırakılamaz".into());
+    }
+
+    let root = projects_root(&app)?;
+    let app_dir = root.parent().unwrap_or(&root);
+    let current = get_saved_capture_shortcut(app_dir);
+
+    if clean.eq_ignore_ascii_case(&current) {
+        return Ok(current);
+    }
+
+    let gs = app.global_shortcut();
+    let _ = gs.unregister(current.as_str());
+
+    if let Err(e) = gs.register(clean) {
+        let _ = gs.register(current.as_str());
+        return Err(format!("Geçersiz veya sistemle çakışan kısayol: {}", e));
+    }
+
+    let settings_path = app_dir.join("shortcuts.json");
+    let json = serde_json::json!({
+        "captureShortcut": clean
+    });
+    if let Err(e) = fs::write(settings_path, json.to_string()) {
+        return Err(format!("Ayar kaydedilemedi: {}", e));
+    }
+
+    Ok(clean.to_string())
+}
+
 fn toggle_capture_window(app: &AppHandle) {
     let Some(window) = app.get_webview_window("capture") else {
         return;
@@ -1140,8 +1210,18 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
 
+            let root = projects_root(&handle)?;
+            let app_dir = root.parent().unwrap_or(&root);
+            ensure_mcp_server(app_dir);
+
             // Global "capture" shortcut works even when another app is focused.
-            handle.global_shortcut().register(CAPTURE_SHORTCUT)?;
+            let saved_shortcut = get_saved_capture_shortcut(app_dir);
+            if let Err(e) = handle.global_shortcut().register(saved_shortcut.as_str()) {
+                eprintln!("Failed to register global shortcut {}: {}", saved_shortcut, e);
+                if saved_shortcut != CAPTURE_SHORTCUT {
+                    let _ = handle.global_shortcut().register(CAPTURE_SHORTCUT);
+                }
+            }
 
             // Capture window loses focus (user clicked away) -> dismiss it,
             // same as pressing Escape.
@@ -1273,7 +1353,9 @@ pub fn run() {
             get_mcp_status,
             toggle_project_mcp_access,
             set_mcp_permission_setting,
-            clear_mcp_logs
+            clear_mcp_logs,
+            get_capture_shortcut,
+            update_capture_shortcut
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -27,12 +27,23 @@ import {
   toggleProjectMcpAccess,
   setMcpPermissionSetting,
   clearMcpLogs,
+  getCaptureShortcut,
+  updateCaptureShortcut,
   type EntryMeta,
   type TodoItem,
   type SearchResultItem,
   type McpStatus,
 } from "./lib/api";
 import { extractImageFromPasteEvent, stripDataUrlPrefix } from "./lib/clipboardImage";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  type Language,
+  type ThemeId,
+  translations,
+  getInitialLanguage,
+  getInitialTheme,
+  applyTheme,
+} from "./lib/i18n";
 
 const appWindow = getCurrentWindow();
 
@@ -151,6 +162,69 @@ export default function Dashboard() {
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({});
 
+  // Settings & i18n states
+  const [lang, setLang] = useState<Language>(getInitialLanguage);
+  const [theme, setTheme] = useState<ThemeId>(getInitialTheme);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"appearance" | "shortcuts" | "about">("appearance");
+
+  const t = <K extends keyof typeof translations.tr>(key: K): (typeof translations.tr)[K] => {
+    return (translations[lang] as any)[key];
+  };
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  function handleLanguageChange(newLang: Language) {
+    setLang(newLang);
+    localStorage.setItem("mindpipe_lang", newLang);
+  }
+
+  function handleThemeChange(newTheme: ThemeId) {
+    setTheme(newTheme);
+    applyTheme(newTheme);
+  }
+
+  // Shortcut customization state
+  const [captureShortcut, setCaptureShortcut] = useState("Ctrl+Shift+N");
+  const [isEditingShortcut, setIsEditingShortcut] = useState(false);
+  const [shortcutDraft, setShortcutDraft] = useState("Ctrl+Shift+N");
+  const [shortcutStatus, setShortcutStatus] = useState("");
+  const [shortcutError, setShortcutError] = useState("");
+
+  useEffect(() => {
+    getCaptureShortcut()
+      .then((sc) => {
+        if (sc) {
+          setCaptureShortcut(sc);
+          setShortcutDraft(sc);
+        }
+      })
+      .catch((err) => console.error("Could not get capture shortcut:", err));
+  }, []);
+
+  async function handleSaveCaptureShortcut(newVal?: string) {
+    const toSave = (newVal !== undefined ? newVal : shortcutDraft).trim();
+    if (!toSave) return;
+    setShortcutError("");
+    setShortcutStatus("");
+    try {
+      const updated = await updateCaptureShortcut(toSave);
+      setCaptureShortcut(updated);
+      setShortcutDraft(updated);
+      setIsEditingShortcut(false);
+      setShortcutStatus(t("shortcutSaved"));
+      setTimeout(() => setShortcutStatus(""), 3000);
+    } catch (err) {
+      setShortcutError(String(err));
+    }
+  }
+
+  async function handleResetCaptureShortcut() {
+    await handleSaveCaptureShortcut("Ctrl+Shift+N");
+  }
+
   // MCP Status & Logs state
   const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
   const [isMcpModalOpen, setIsMcpModalOpen] = useState(false);
@@ -185,7 +259,7 @@ export default function Dashboard() {
       setMcpConfigCopied(true);
       setTimeout(() => setMcpConfigCopied(false), 2200);
     } catch (err) {
-      alert(`Kopyalanamadı: ${String(err)}`);
+      alert(lang === "tr" ? `Kopyalanamadı: ${String(err)}` : `Copy failed: ${String(err)}`);
     }
   }
 
@@ -214,7 +288,7 @@ export default function Dashboard() {
       await toggleProjectMcpAccess(projectName);
       await refreshMcpStatus();
     } catch (err) {
-      alert(`Erişim izni güncellenemedi: ${String(err)}`);
+      alert(lang === "tr" ? `Erişim izni güncellenemedi: ${String(err)}` : `Failed to update permission: ${String(err)}`);
     }
   }
 
@@ -223,7 +297,7 @@ export default function Dashboard() {
       await clearMcpLogs();
       await refreshMcpStatus();
     } catch (err) {
-      alert(`Loglar temizlenemedi: ${String(err)}`);
+      alert(lang === "tr" ? `Loglar temizlenemedi: ${String(err)}` : `Failed to clear logs: ${String(err)}`);
     }
   }
 
@@ -232,7 +306,7 @@ export default function Dashboard() {
       await setMcpPermissionSetting(key, value);
       await refreshMcpStatus();
     } catch (err) {
-      alert(`Yetki ayarı kaydedilemedi: ${String(err)}`);
+      alert(lang === "tr" ? `Yetki ayarı kaydedilemedi: ${String(err)}` : `Failed to save permission: ${String(err)}`);
     }
   }
 
@@ -586,9 +660,7 @@ export default function Dashboard() {
       alert("inbox projesi silinemez.");
       return;
     }
-    const confirmed = window.confirm(
-      `"${projectName}" projesini ve içindeki tüm notları silmek istediğinizden emin misiniz?`
-    );
+    const confirmed = window.confirm(t("deleteProjectConfirm")(projectName));
     if (!confirmed) return;
 
     try {
@@ -640,7 +712,7 @@ export default function Dashboard() {
 
   async function handleDeleteEntry(entry: EntryMeta, e?: React.MouseEvent) {
     if (e) e.stopPropagation();
-    const confirmed = window.confirm(`"${entry.name}" kaydını silmek istiyor musunuz?`);
+    const confirmed = window.confirm(t("deleteEntryConfirm")(entry.name));
     if (!confirmed) return;
 
     try {
@@ -747,6 +819,14 @@ export default function Dashboard() {
           setEditingEntry(null);
           return;
         }
+        if (isSettingsOpen) {
+          setIsSettingsOpen(false);
+          return;
+        }
+        if (isMcpModalOpen) {
+          setIsMcpModalOpen(false);
+          return;
+        }
         if (isCreatingNote) {
           setIsCreatingNote(false);
           return;
@@ -817,12 +897,25 @@ export default function Dashboard() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("paste", onWindowPaste);
     };
-  }, [editingEntry, editorContent, lightboxImage, isCreatingNote, searchQuery, active, inlineEditingPath]);
+  }, [editingEntry, editorContent, lightboxImage, isCreatingNote, searchQuery, active, inlineEditingPath, isSettingsOpen, isMcpModalOpen]);
 
   return (
     <div className="dashboard">
       <aside className="dashboard__sidebar">
-        <div className="dashboard__sidebar-title">Projeler</div>
+        <div className="dashboard__sidebar-header">
+          <span className="dashboard__sidebar-title">{t("projects")}</span>
+          <button
+            type="button"
+            className="dashboard__settings-trigger-btn"
+            onClick={() => setIsSettingsOpen(true)}
+            title={t("settingsTitle")}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        </div>
         <div className="dashboard__projects-list">
           {projects.map((p) => {
             const isAllowed = isProjectMcpAllowed(p);
@@ -849,10 +942,10 @@ export default function Dashboard() {
                       onClick={(e) => handleToggleProjectMcp(p, e)}
                       title={
                         !isAllowed
-                          ? "AI Erişimi: KAPALI (Engellendi)\nTıklayarak AI erişimini TEKRAR AÇABİLİRSİNİZ."
+                          ? (lang === "tr" ? "AI Erişimi: KAPALI (Engellendi)\nTıklayarak AI erişimini TEKRAR AÇABİLİRSİNİZ." : "AI Access: OFF (Blocked)\nClick to ALLOW AI access.")
                           : mcpStatus.isLiveProcessing
-                          ? `AI Aktif İşlem Yapıyor: ${mcpStatus.detectedClient || "AI"}\n(Tıkla: Bu projenin AI erişimini KAPAT)`
-                          : `AI Erişimi Açık (Hazır / Beklemede - ${mcpStatus.detectedClient || "AI"})\n(Tıkla: Bu projenin AI erişimini KAPAT)`
+                          ? (lang === "tr" ? `AI Aktif İşlem Yapıyor: ${mcpStatus.detectedClient || "AI"}\n(Tıkla: Bu projenin AI erişimini KAPAT)` : `AI Actively Processing: ${mcpStatus.detectedClient || "AI"}\n(Click to BLOCK AI access)`)
+                          : (lang === "tr" ? `AI Erişimi Açık (Hazır / Beklemede - ${mcpStatus.detectedClient || "AI"})\n(Tıkla: Bu projenin AI erişimini KAPAT)` : `AI Access Allowed (Ready / Idle - ${mcpStatus.detectedClient || "AI"})\n(Click to BLOCK AI access)`)
                       }
                       aria-label={`MCP AI Erişimi (${p})`}
                     >
@@ -872,9 +965,9 @@ export default function Dashboard() {
                   <button
                     type="button"
                     className="dashboard__project-btn"
-                    title="Klasörü Dosya Gezgininde Aç"
+                    title={t("openFolder")}
                     onClick={(e) => handleOpenFolder(p, e)}
-                    aria-label="Klasörde Aç"
+                    aria-label={t("openFolder")}
                   >
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -884,9 +977,9 @@ export default function Dashboard() {
                     <button
                       type="button"
                       className="dashboard__project-btn dashboard__project-btn--delete"
-                      title="Projeyi Sil"
+                      title={t("deleteProject")}
                       onClick={(e) => handleDeleteProject(p, e)}
-                      aria-label="Projeyi Sil"
+                      aria-label={t("deleteProject")}
                     >
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18" />
@@ -903,7 +996,7 @@ export default function Dashboard() {
         <form className="dashboard__new-project" onSubmit={handleCreateProject}>
           <input
             type="text"
-            placeholder="+ yeni proje ekle"
+            placeholder={t("newProjectBtn")}
             value={newProjectName}
             onChange={(e) => setNewProjectName(e.target.value)}
           />
@@ -919,7 +1012,7 @@ export default function Dashboard() {
               : ""
           }`}
           onClick={() => setIsMcpModalOpen(true)}
-          title="MindPipe MCP Durumu, İstemci Bağlantısı ve Güvenlik Duvarı (Tıkla)"
+          title={lang === "tr" ? "MindPipe MCP Durumu, İstemci Bağlantısı ve Güvenlik Duvarı (Tıkla)" : "MindPipe MCP Status, Client Connection & Firewall (Click)"}
         >
           <div className="sidebar__mcp-status-info">
             <span
@@ -933,10 +1026,10 @@ export default function Dashboard() {
             />
             <span className="sidebar__mcp-label">
               {mcpStatus?.isLiveProcessing
-                ? `${mcpStatus.detectedClient || "AI"} · çalışıyor`
+                ? `${mcpStatus.detectedClient || "AI"} · ${lang === "tr" ? "çalışıyor" : "active"}`
                 : mcpStatus?.isConfigured
-                ? `${mcpStatus.detectedClient || "AI"} · hazır`
-                : "MCP bağlı değil"}
+                ? `${mcpStatus.detectedClient || "AI"} · ${t("ready")}`
+                : lang === "tr" ? "MCP bağlı değil" : "MCP not connected"}
             </span>
           </div>
           {mcpStatus?.logs && mcpStatus.logs.length > 0 && (
@@ -959,7 +1052,7 @@ export default function Dashboard() {
                   </span>
                 )}
                 <span className="dashboard__entry-badge">
-                  {activeTab === "notes" ? `${entries.length} kayıt` : `${todos.length} görev`}
+                  {activeTab === "notes" ? `${entries.length} ${t("entriesCount")}` : `${todos.length} ${t("todosTab").toLowerCase()}`}
                 </span>
               </div>
 
@@ -969,17 +1062,17 @@ export default function Dashboard() {
                   type="button"
                   className={`dashboard__view-tab ${activeTab === "notes" ? "dashboard__view-tab--active" : ""}`}
                   onClick={() => setActiveTab("notes")}
-                  title="Notlar Akışı"
+                  title={t("notesTab")}
                 >
-                  Notlar
+                  {t("notesTab")}
                 </button>
                 <button
                   type="button"
                   className={`dashboard__view-tab ${activeTab === "todos" ? "dashboard__view-tab--active" : ""}`}
                   onClick={() => setActiveTab("todos")}
-                  title="Yapılacaklar Listesi"
+                  title={t("todosTab")}
                 >
-                  Görevler
+                  {t("todosTab")}
                   {todos.filter((t) => !t.done).length > 0 && (
                     <span className="dashboard__view-tab-count">
                       {todos.filter((t) => !t.done).length}
@@ -995,9 +1088,9 @@ export default function Dashboard() {
                   type="button"
                   className="btn btn--primary dashboard__add-btn"
                   onClick={() => setIsCreatingNote(true)}
-                  title="Yeni Not Ekle (Hızlı yakalama: Ctrl+Shift+N)"
+                  title={`${t("addNoteBtn")} (Ctrl+Shift+N)`}
                 >
-                  + Not Ekle
+                  {t("addNoteBtn")}
                 </button>
               )}
 
@@ -1006,8 +1099,8 @@ export default function Dashboard() {
                 type="button"
                 className={`dashboard__icon-btn ${aiContextStatus ? "dashboard__icon-btn--success" : ""}`}
                 onClick={handleCopyAiContext}
-                title={aiContextStatus ? "AI Bağlamı Kopyalandı ✓" : "AI Bağlamını Kopyala"}
-                aria-label="AI Bağlamını Kopyala"
+                title={aiContextStatus ? t("copiedAiContext") : t("copyAiContext")}
+                aria-label={t("copyAiContext")}
               >
                 {aiContextStatus ? (
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -1026,8 +1119,8 @@ export default function Dashboard() {
                 type="button"
                 className="dashboard__icon-btn"
                 onClick={(e) => handleOpenFolder(active, e)}
-                title="Proje Klasörünü Aç"
-                aria-label="Klasörde Aç"
+                title={t("openFolder")}
+                aria-label={t("openFolder")}
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -1040,8 +1133,8 @@ export default function Dashboard() {
                   type="button"
                   className="dashboard__icon-btn dashboard__icon-btn--danger"
                   onClick={() => handleDeleteProject(active)}
-                  title="Projeyi Sil"
-                  aria-label="Projeyi Sil"
+                  title={t("deleteProject")}
+                  aria-label={t("deleteProject")}
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="3 6 5 6 21 6" />
@@ -1059,36 +1152,36 @@ export default function Dashboard() {
                 <input
                   type="text"
                   className="todos-view__input"
-                  placeholder="Yeni görev ekle ve Enter'a bas..."
+                  placeholder={t("todoPlaceholder")}
                   value={newTodoText}
                   onChange={(e) => setNewTodoText(e.target.value)}
                   autoFocus
                 />
                 <button type="submit" className="btn btn--primary todos-view__submit-btn">
-                  Ekle
+                  {t("addTodoBtn")}
                 </button>
               </form>
 
               {todosLoading ? (
-                <div className="empty-state">Görevler yükleniyor...</div>
+                <div className="empty-state">{t("loading")}</div>
               ) : todos.length === 0 ? (
                 <div className="empty-state">
-                  <p className="empty-state__title">Bu projede henüz görev yok</p>
+                  <p className="empty-state__title">{t("noTodosTitle")}</p>
                   <p className="empty-state__sub">
-                    Yukarıdaki kutucuğa yazıp <strong>Enter</strong> tuşuna basarak hızlıca görev ekleyebilirsiniz.
+                    {t("noTodosSub")}
                   </p>
                 </div>
               ) : (
                 <div className="todos-view__lists">
                   {/* Active Todos */}
-                  {todos.filter((t) => !t.done).length > 0 && (
+                  {todos.filter((tItem) => !tItem.done).length > 0 && (
                     <div className="todos-view__section">
                       <div className="todos-view__section-title">
-                        Bekleyenler ({todos.filter((t) => !t.done).length})
+                        {t("pendingTodos")} ({todos.filter((tItem) => !tItem.done).length})
                       </div>
                       <div className="todos-view__items">
                         {todos
-                          .filter((t) => !t.done)
+                          .filter((tItem) => !tItem.done)
                           .map((todo) => (
                             <div key={todo.id} className="todo-item">
                               <label className="todo-item__check-label">
@@ -1109,7 +1202,7 @@ export default function Dashboard() {
                               <button
                                 type="button"
                                 className="todo-item__delete-btn"
-                                title="Görevi Sil"
+                                title={t("deleteTodo")}
                                 onClick={() => handleDeleteTodo(todo.id)}
                               >
                                 ✕
@@ -1121,14 +1214,14 @@ export default function Dashboard() {
                   )}
 
                   {/* Completed Todos */}
-                  {todos.filter((t) => t.done).length > 0 && (
+                  {todos.filter((tItem) => tItem.done).length > 0 && (
                     <div className="todos-view__section todos-view__section--completed">
                       <div className="todos-view__section-title">
-                        Tamamlananlar ({todos.filter((t) => t.done).length})
+                        {t("completedTodos")} ({todos.filter((tItem) => tItem.done).length})
                       </div>
                       <div className="todos-view__items">
                         {todos
-                          .filter((t) => t.done)
+                          .filter((tItem) => tItem.done)
                           .map((todo) => (
                             <div key={todo.id} className="todo-item todo-item--done">
                               <label className="todo-item__check-label">
@@ -1149,7 +1242,7 @@ export default function Dashboard() {
                               <button
                                 type="button"
                                 className="todo-item__delete-btn"
-                                title="Görevi Sil"
+                                title={t("deleteTodo")}
                                 onClick={() => handleDeleteTodo(todo.id)}
                               >
                                 ✕
@@ -1172,7 +1265,11 @@ export default function Dashboard() {
                     ref={searchInputRef}
                     type="text"
                     className="dashboard__search-input"
-                    placeholder={`Ara (Ctrl+F) — ${searchScope === "current" ? `"${active}" içinde` : "Tüm projelerde"}...`}
+                    placeholder={
+                      searchScope === "current"
+                        ? t("searchPlaceholderCurrent")(active)
+                        : t("searchPlaceholderAll")
+                    }
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
@@ -1197,7 +1294,7 @@ export default function Dashboard() {
                     }
                     onClick={() => setSearchScope("current")}
                   >
-                    Bu Projede
+                    {t("searchScopeCurrent")}
                   </button>
                   <button
                     type="button"
@@ -1207,7 +1304,7 @@ export default function Dashboard() {
                     }
                     onClick={() => setSearchScope("all")}
                   >
-                    Tüm Projelerde
+                    {t("searchScopeAll")}
                   </button>
                 </div>
               </div>
@@ -1215,14 +1312,14 @@ export default function Dashboard() {
               {isCreatingNote && (
                 <form className="dashboard__quick-note" onSubmit={handleCreateDirectNote}>
                   <textarea
-                    placeholder="Yeni not içeriğini yazın..."
+                    placeholder={t("quickNotePlaceholder")}
                     value={newNoteContent}
                     onChange={(e) => setNewNoteContent(e.target.value)}
                     autoFocus
                   />
                   <div className="dashboard__quick-note-actions">
                     <button type="submit" className="btn btn--primary">
-                      Kaydet
+                      {t("save")}
                     </button>
                     <button
                       type="button"
@@ -1232,7 +1329,7 @@ export default function Dashboard() {
                         setNewNoteContent("");
                       }}
                     >
-                      İptal
+                      {t("cancel")}
                     </button>
                   </div>
                 </form>
@@ -1243,15 +1340,15 @@ export default function Dashboard() {
                 <div className="search-results">
                   <div className="search-results__header">
                     <span>
-                      <strong>"{searchQuery}"</strong> için arama sonuçları ({searchResults.length} eşleşme)
+                      {t("searchResultsFor")(searchQuery, searchResults.length)}
                     </span>
-                    {isSearching && <span className="search-results__loading">Aranıyor...</span>}
+                    {isSearching && <span className="search-results__loading">{t("searching")}</span>}
                   </div>
 
                   {searchResults.length === 0 && !isSearching ? (
                     <div className="empty-state">
-                      <p className="empty-state__title">Eşleşen kayıt bulunamadı</p>
-                      <p className="empty-state__sub">Farklı bir arama kelimesi deneyebilir veya kapsamı "Tüm Projelerde" olarak değiştirebilirsiniz.</p>
+                      <p className="empty-state__title">{t("noMatchingEntries")}</p>
+                      <p className="empty-state__sub">{t("noMatchingEntriesSub")}</p>
                     </div>
                   ) : (
                     <div className="entries-list">
@@ -1266,7 +1363,7 @@ export default function Dashboard() {
                               className="entry__thumb"
                               src={convertFileSrc(item.entry.imagePaths[0])}
                               alt=""
-                              title="Büyütmek için tıklayın"
+                              title={t("clickToZoom")}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setLightboxImage(item.entry.imagePaths[0]);
@@ -1279,7 +1376,7 @@ export default function Dashboard() {
                                 <span className="entry__project-tag">{item.project}</span>
                               )}
                               {item.entry.isAi && (
-                                <span className="entry__ai-tag" title="AI tarafından oluşturuldu">
+                                <span className="entry__ai-tag" title={lang === "tr" ? "AI tarafından oluşturuldu" : "Created by AI"}>
                                   <AiSparkleIcon size={11} />
                                 </span>
                               )}
@@ -1293,12 +1390,12 @@ export default function Dashboard() {
                   )}
                 </div>
               ) : loading ? (
-                <div className="empty-state">Yükleniyor...</div>
+                <div className="empty-state">{t("loading")}</div>
               ) : entries.length === 0 ? (
                 <div className="empty-state">
-                  <p className="empty-state__title">Bu projede henüz kayıt yok</p>
+                  <p className="empty-state__title">{t("noEntriesTitle")}</p>
                   <p className="empty-state__sub">
-                    <strong>Ctrl+Shift+N</strong> kısayolu ile hızlı yakalayabilir veya yukarıdan <strong>+ Not Ekle</strong> butonunu kullanabilirsiniz.
+                    {t("noEntriesSub")}
                   </p>
                 </div>
               ) : (
@@ -1329,22 +1426,22 @@ export default function Dashboard() {
                           <div className="devlog-item__meta">
                             <div
                               className="devlog-item__drag-handle"
-                              title="Sıralamak için sürükleyin"
+                              title={t("reorderTitle")}
                             >
                               ⠿
                             </div>
 
                             {entry.pinned && (
-                              <div className="devlog-item__pinned-badge" title="Başa sabitlendi">
+                              <div className="devlog-item__pinned-badge" title={lang === "tr" ? "Başa sabitlendi" : "Pinned to top"}>
                                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                                   <path d="M16 3H8v2h1v5l-2 3v2h5v6l1 1 1-1v-6h5v-2l-2-3V5h1V3z" />
                                 </svg>
-                                <span>Sabitlendi</span>
+                                <span>{t("pinnedBadge")}</span>
                               </div>
                             )}
 
                             {entry.isAi && (
-                              <span className="entry__ai-tag" title="AI tarafından oluşturuldu">
+                              <span className="entry__ai-tag" title={lang === "tr" ? "AI tarafından oluşturuldu" : "Created by AI"}>
                                 <AiSparkleIcon size={11} />
                               </span>
                             )}
@@ -1359,25 +1456,25 @@ export default function Dashboard() {
                             <button
                               type="button"
                               className="devlog-action-btn"
-                              title="Metni Kopyala"
+                              title={lang === "tr" ? "Metni Kopyala" : "Copy Text"}
                               onClick={(e) => handleCopyEntryText(entry, e)}
                             >
-                              {copiedPath === entry.path ? "Kopyalandı ✓" : "Kopyala"}
+                              {copiedPath === entry.path ? t("copied") : t("copy")}
                             </button>
 
                             <button
                               type="button"
                               className={`devlog-action-btn ${entry.pinned ? "devlog-action-btn--pinned" : ""}`}
-                              title={entry.pinned ? "Sabitlemeyi Kaldır" : "Başa Sabitle"}
+                              title={entry.pinned ? (lang === "tr" ? "Sabitlemeyi Kaldır" : "Unpin") : (lang === "tr" ? "Başa Sabitle" : "Pin to Top")}
                               onClick={(e) => handleTogglePin(entry, e)}
                             >
-                              {entry.pinned ? "Sabiti Kaldır" : "📌 Sabitle"}
+                              {entry.pinned ? t("unpin") : t("pin")}
                             </button>
 
                             <button
                               type="button"
                               className="devlog-action-btn"
-                              title={isInlineEditing ? "Düzenlemeyi Kapat" : "Düzenle"}
+                              title={isInlineEditing ? (lang === "tr" ? "Düzenlemeyi Kapat" : "Close Editor") : (lang === "tr" ? "Düzenle" : "Edit")}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 if (isInlineEditing) {
@@ -1387,13 +1484,13 @@ export default function Dashboard() {
                                 }
                               }}
                             >
-                              ✏️ {isInlineEditing ? "Kapat" : "Düzenle"}
+                              {isInlineEditing ? t("closeEdit") : t("edit")}
                             </button>
 
                             <button
                               type="button"
                               className="devlog-action-btn devlog-action-btn--delete"
-                              title="Sil"
+                              title={t("delete")}
                               onClick={(e) => handleDeleteEntry(entry, e)}
                             >
                               🗑️
@@ -1416,13 +1513,13 @@ export default function Dashboard() {
                                       e.stopPropagation();
                                       setLightboxImage(imgPath);
                                     }}
-                                    title="Tam boyutta büyütmek için tıklayın"
+                                    title={t("clickToZoom")}
                                   />
                                   {isInlineEditing && (
                                     <button
                                       type="button"
                                       className="devlog-item__image-delete"
-                                      title="Bu görseli kaldır"
+                                      title={t("removeImage")}
                                       onClick={(e) => handleDeleteImageInline(entry, imgPath, e)}
                                     >
                                       ✕
@@ -1440,7 +1537,7 @@ export default function Dashboard() {
                                 className="devlog-item__editor"
                                 value={inlineDraftText}
                                 onChange={(e) => setInlineDraftText(e.target.value)}
-                                placeholder="Not içeriğini düzenleyin... (Ctrl+S ile kaydet)"
+                                placeholder={t("inlineEditorPlaceholder")}
                                 autoFocus
                                 rows={Math.max(4, Math.min(18, (inlineDraftText.split("\n").length + 2)))}
                                 onKeyDown={(e) => {
@@ -1459,21 +1556,21 @@ export default function Dashboard() {
                                     className="btn btn--primary"
                                     onClick={() => handleSaveInlineNote(entry)}
                                   >
-                                    💾 Kaydet (Ctrl+S)
+                                    💾 {t("save")} (Ctrl+S)
                                   </button>
                                   <button
                                     type="button"
                                     className="btn btn--secondary"
                                     onClick={() => setInlineEditingPath(null)}
                                   >
-                                    İptal (Esc)
+                                    {t("cancel")} (Esc)
                                   </button>
                                   {inlineStatus && (
                                     <span className="devlog-item__status">{inlineStatus}</span>
                                   )}
                                 </div>
                                 <span className="devlog-item__editor-hint">
-                                  Ctrl+V ile görsel ekleyebilirsiniz
+                                  {t("inlineEditorHint")}
                                 </span>
                               </div>
                             </div>
@@ -1481,11 +1578,11 @@ export default function Dashboard() {
                             <div
                               className={`devlog-item__content ${shouldClamp ? "devlog-item__content--clamped" : ""}`}
                               onDoubleClick={() => startInlineEdit(entry)}
-                              title="Düzenlemek için çift tıklayın"
+                              title={t("doubleClickToEdit")}
                             >
                               {renderDevLogContent(fullContent)}
                               {!fullContent.trim() && (!entry.imagePaths || entry.imagePaths.length === 0) && (
-                                <span className="devlog-empty">(Boş kayıt)</span>
+                                <span className="devlog-empty">{t("emptyEntry")}</span>
                               )}
                             </div>
                           )}
@@ -1502,7 +1599,7 @@ export default function Dashboard() {
                                 toggleNoteExpand(entry.path);
                               }}
                             >
-                              <span>Devamını Gör</span>
+                              <span>{t("readMore")}</span>
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="6 9 12 15 18 9" />
                               </svg>
@@ -1518,7 +1615,7 @@ export default function Dashboard() {
                                 toggleNoteExpand(entry.path);
                               }}
                             >
-                              <span>Daha az göster</span>
+                              <span>{t("showLess")}</span>
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="18 15 12 9 6 15" />
                               </svg>
@@ -1557,7 +1654,7 @@ export default function Dashboard() {
                 type="button"
                 className="modal-card__close-btn"
                 onClick={() => setEditingEntry(null)}
-                title="Kapat (Esc)"
+                title={lang === "tr" ? "Kapat (Esc)" : "Close (Esc)"}
               >
                 ✕
               </button>
@@ -1574,12 +1671,12 @@ export default function Dashboard() {
                         alt={`Görsel ${i + 1}`}
                         className="modal-card__gallery-image"
                         onClick={() => setLightboxImage(imgPath)}
-                        title="Tam boyutta açmak için tıklayın"
+                        title={t("clickToZoom")}
                       />
                       <button
                         type="button"
                         className="modal-card__gallery-delete-btn"
-                        title="Bu görseli kaldır"
+                        title={t("removeImage")}
                         onClick={(e) => handleDeleteImageFromModal(imgPath, e)}
                       >
                         ✕
@@ -1591,19 +1688,23 @@ export default function Dashboard() {
 
               {/* Paste helper hint in modal */}
               <div className="modal-card__paste-hint">
-                Yeni ekran görüntüsü eklemek için doğrudan <strong>Ctrl+V</strong> ile yapıştırabilirsiniz.
+                {lang === "tr" ? (
+                  <>Yeni ekran görüntüsü eklemek için doğrudan <strong>Ctrl+V</strong> ile yapıştırabilirsiniz.</>
+                ) : (
+                  <>Paste new screenshots directly with <strong>Ctrl+V</strong>.</>
+                )}
               </div>
 
               {(editingEntry.kind === "note" || editingEntry.kind === "mixed") && (
                 <div className="modal-card__editor-wrap">
                   {editorLoading ? (
-                    <div className="modal-card__loading">Not yükleniyor...</div>
+                    <div className="modal-card__loading">{t("loading")}</div>
                   ) : (
                     <textarea
                       className="modal-card__editor"
                       value={editorContent}
                       onChange={(e) => setEditorContent(e.target.value)}
-                      placeholder="Not içeriğini buraya yazın..."
+                      placeholder={lang === "tr" ? "Not içeriğini buraya yazın..." : "Write note content here..."}
                       autoFocus={editingEntry.imagePaths.length === 0}
                     />
                   )}
@@ -1619,23 +1720,23 @@ export default function Dashboard() {
                     className="btn btn--primary"
                     onClick={handleSaveEditedNote}
                   >
-                    💾 Kaydet (Ctrl+S)
+                    💾 {t("save")} (Ctrl+S)
                   </button>
                 )}
                 <button
                   type="button"
                   className="btn btn--secondary"
                   onClick={() => openEntry(editingEntry.path)}
-                  title="İşletim sisteminin varsayılan uygulamasında aç"
+                  title={lang === "tr" ? "İşletim sisteminin varsayılan uygulamasında aç" : "Open in system default app"}
                 >
-                  🔗 Dış Programda Aç
+                  🔗 {lang === "tr" ? "Dış Programda Aç" : "Open in System App"}
                 </button>
                 <button
                   type="button"
                   className="btn btn--danger-subtle"
                   onClick={() => handleDeleteEntry(editingEntry)}
                 >
-                  🗑 Sil
+                  🗑 {t("delete")}
                 </button>
                 {editorStatus && (
                   <span className="modal-card__status">{editorStatus}</span>
@@ -1646,7 +1747,7 @@ export default function Dashboard() {
                 className="btn btn--secondary"
                 onClick={() => setEditingEntry(null)}
               >
-                Kapat
+                {lang === "tr" ? "Kapat" : "Close"}
               </button>
             </div>
           </div>
@@ -1658,7 +1759,7 @@ export default function Dashboard() {
         <div
           className="lightbox-overlay"
           onClick={() => setLightboxImage(null)}
-          title="Kapatmak için tıklayın veya Esc tuşuna basın"
+          title={lang === "tr" ? "Kapatmak için tıklayın veya Esc tuşuna basın" : "Click to close or press Esc"}
         >
           <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
             <img
@@ -1670,7 +1771,7 @@ export default function Dashboard() {
               type="button"
               className="lightbox-close-btn"
               onClick={() => setLightboxImage(null)}
-              title="Kapat (Esc)"
+              title={lang === "tr" ? "Kapat (Esc)" : "Close (Esc)"}
             >
               ✕
             </button>
@@ -1684,16 +1785,16 @@ export default function Dashboard() {
           <div className="modal-card modal-card--mcp" onClick={(e) => e.stopPropagation()}>
             <div className="modal-card__header mcp-modal__header">
               <div className="modal-card__title-box mcp-modal__title-box">
-                <span className="modal-card__title">MindPipe MCP Denetim Masası</span>
+                <span className="modal-card__title">{t("mcpTitle")}</span>
                 <span className="mcp-modal__subtitle">
-                  Yapay zeka tüneli, istemci bağlantısı ve proje güvenlik duvarı
+                  {t("mcpSubtitle")}
                 </span>
               </div>
               <button
                 type="button"
                 className="modal-card__close-btn"
                 onClick={() => setIsMcpModalOpen(false)}
-                title="Kapat (Esc)"
+                title={lang === "tr" ? "Kapat (Esc)" : "Close (Esc)"}
               >
                 ✕
               </button>
@@ -1703,7 +1804,7 @@ export default function Dashboard() {
               {/* Summary stats */}
               <div className="mcp-modal__stats">
                 <div className="mcp-modal__stat-card">
-                  <span className="mcp-modal__stat-label">AI İstemcisi & Durum</span>
+                  <span className="mcp-modal__stat-label">{t("mcpClientStatus")}</span>
                   <div className="mcp-modal__stat-value">
                     <span
                       className={`sidebar__mcp-pulse ${
@@ -1716,34 +1817,37 @@ export default function Dashboard() {
                     />
                     <span>
                       {mcpStatus?.isLiveProcessing
-                        ? `${mcpStatus.detectedClient || "AI"} (İşlem Yapılıyor)`
+                        ? `${mcpStatus.detectedClient || "AI"} (${t("mcpProcessing")})`
                         : mcpStatus?.isConfigured
-                        ? `${mcpStatus.detectedClient || "AI"} (Hazır / Beklemede)`
-                        : "Yapılandırılmadı"}
+                        ? `${mcpStatus.detectedClient || "AI"} (${t("mcpReadyIdle")})`
+                        : t("mcpNotConfigured")}
                     </span>
                   </div>
                   {mcpStatus?.lastActiveTime ? (
                     <span className="mcp-modal__stat-sub">
-                      Son İşlem: {formatTimestamp(mcpStatus.lastActiveTime)}
+                      {t("mcpLastActive")(formatTimestamp(mcpStatus.lastActiveTime))}
                     </span>
                   ) : mcpStatus?.isConfigured ? (
                     <span className="mcp-modal__stat-sub">
-                      Tünel açık, komut bekleniyor
+                      {t("mcpTunnelOpen")}
                     </span>
                   ) : null}
                 </div>
 
                 <div className="mcp-modal__stat-card">
-                  <span className="mcp-modal__stat-label">Güvenlik Duvarı</span>
+                  <span className="mcp-modal__stat-label">{t("mcpFirewall")}</span>
                   <span className="mcp-modal__stat-value mcp-modal__stat-value--scope">
-                    {projects.filter((p) => isProjectMcpAllowed(p)).length} / {projects.length} Proje Açık
+                    {t("mcpProjectsAllowed")(
+                      projects.filter((p) => isProjectMcpAllowed(p)).length,
+                      projects.length
+                    )}
                   </span>
                 </div>
 
                 <div className="mcp-modal__stat-card">
-                  <span className="mcp-modal__stat-label">Toplam İşlem</span>
+                  <span className="mcp-modal__stat-label">{t("mcpTotalOperations")}</span>
                   <span className="mcp-modal__stat-value">
-                    {mcpStatus?.logs.length || 0} kayıt
+                    {t("mcpLogEntriesCount")(mcpStatus?.logs.length || 0)}
                   </span>
                 </div>
               </div>
@@ -1752,9 +1856,9 @@ export default function Dashboard() {
               <div className="mcp-modal__setup-box">
                 <div className="mcp-modal__setup-header">
                   <div className="mcp-modal__setup-title-group">
-                    <span className="mcp-modal__setup-title">Bağlantı Kurulumu</span>
+                    <span className="mcp-modal__setup-title">{t("mcpConnectionSetup")}</span>
                     <span className="mcp-modal__setup-sub">
-                      Aşağıdaki yapılandırmayı AI istemcinizin MCP ayar dosyasına ekleyip istemciyi yeniden başlatın.
+                      {t("mcpConnectionSetupDesc")}
                     </span>
                   </div>
                   <div className="mcp-modal__client-tabs">
@@ -1763,14 +1867,14 @@ export default function Dashboard() {
                       className={`mcp-modal__client-tab ${mcpClientTab === "json" ? "mcp-modal__client-tab--active" : ""}`}
                       onClick={() => setMcpClientTab("json")}
                     >
-                      Standart (JSON)
+                      {t("mcpStandardJson")}
                     </button>
                     <button
                       type="button"
                       className={`mcp-modal__client-tab ${mcpClientTab === "codex" ? "mcp-modal__client-tab--active" : ""}`}
                       onClick={() => setMcpClientTab("codex")}
                     >
-                      Codex (TOML)
+                      {t("mcpCodexToml")}
                     </button>
                   </div>
                 </div>
@@ -1809,7 +1913,7 @@ export default function Dashboard() {
                       className={`mcp-modal__code-copy-btn ${mcpConfigCopied ? "mcp-modal__code-copy-btn--success" : ""}`}
                       onClick={() => handleCopyMcpConfig(getMcpConfigSnippet(mcpClientTab, mcpStatus?.serverScriptPath))}
                     >
-                      {mcpConfigCopied ? "Kopyalandı ✓" : "Kopyala"}
+                      {mcpConfigCopied ? t("copied") : t("copy")}
                     </button>
                   </div>
                   <pre className="mcp-modal__code-block">
@@ -1821,9 +1925,9 @@ export default function Dashboard() {
               {/* Project AI Access Control Firewall */}
               <div className="mcp-modal__firewall">
                 <div className="mcp-modal__firewall-header">
-                  <span className="mcp-modal__firewall-title">Proje Bazlı AI Erişim İzinleri</span>
+                  <span className="mcp-modal__firewall-title">{t("mcpProjectPermissions")}</span>
                   <span className="mcp-modal__firewall-sub">
-                    Yapay zekanın okuyup yazabileceği projeleri tek tıkla açıp kapatabilirsiniz:
+                    {t("mcpProjectPermissionsDesc")}
                   </span>
                 </div>
                 <div className="mcp-modal__firewall-grid">
@@ -1845,9 +1949,9 @@ export default function Dashboard() {
                             isAllowed ? "mcp-modal__firewall-btn--allowed" : "mcp-modal__firewall-btn--blocked"
                           }`}
                           onClick={(e) => handleToggleProjectMcp(proj, e)}
-                          title={isAllowed ? "Erişimi Kapat (Yapay zekayı engelle)" : "Erişimi Aç (Yapay zekaya izin ver)"}
+                          title={isAllowed ? t("mcpRevokeAccessTitle") : t("mcpGrantAccessTitle")}
                         >
-                          {isAllowed ? "Açık ✓" : "Kapalı ✕"}
+                          {isAllowed ? t("mcpAccessAllowed") : t("mcpAccessBlocked")}
                         </button>
                       </div>
                     );
@@ -1863,23 +1967,23 @@ export default function Dashboard() {
                       <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                     </svg>
-                    Yapay Zeka Yetkilendirme & Güvenlik Kapsamı
+                    {t("mcpPermissionsScope")}
                   </span>
                   <span className="mcp-modal__permissions-sub">
-                    AI modellerinin (Antigravity/Claude/Cursor) notları düzenleme ve silme yetki sınırlarını belirleyin:
+                    {t("mcpPermissionsScopeDesc")}
                   </span>
                 </div>
 
                 <div className="mcp-modal__perm-list">
                   <div className="mcp-modal__perm-row">
                     <div className="mcp-modal__perm-info">
-                      <span className="mcp-modal__perm-label">Not Düzenleme Yetkisi</span>
+                      <span className="mcp-modal__perm-label">{t("mcpEditPermissionLabel")}</span>
                       <span className="mcp-modal__perm-desc">
                         {mcpStatus?.allowAiEdit === "all"
-                          ? "Tüm notları düzenleyebilir."
+                          ? t("mcpEditAllDesc")
                           : mcpStatus?.allowAiEdit === "none"
-                          ? "Hiçbir notu düzenleyemez (Salt okunur)."
-                          : "Sadece AI'ın kendi oluşturduğu notları ve projeleri düzenleyebilir."}
+                          ? t("mcpEditNoneDesc")
+                          : t("mcpEditOnlyAiDesc")}
                       </span>
                     </div>
                     <div className="mcp-modal__perm-options">
@@ -1887,38 +1991,38 @@ export default function Dashboard() {
                         type="button"
                         className={`mcp-modal__perm-btn ${(!mcpStatus?.allowAiEdit || mcpStatus.allowAiEdit === "only_ai") ? "mcp-modal__perm-btn--active" : ""}`}
                         onClick={() => handleSetPermissionSetting("allowAiEdit", "only_ai")}
-                        title="Yalnızca AI'ın oluşturduğu notları ve projeleri düzenleyebilir"
+                        title={lang === "tr" ? "Yalnızca AI'ın oluşturduğu notları ve projeleri düzenleyebilir" : "Can only edit notes and projects created by AI"}
                       >
-                        Yalnızca AI
+                        {t("mcpBtnOnlyAi")}
                       </button>
                       <button
                         type="button"
                         className={`mcp-modal__perm-btn ${mcpStatus?.allowAiEdit === "all" ? "mcp-modal__perm-btn--active" : ""}`}
                         onClick={() => handleSetPermissionSetting("allowAiEdit", "all")}
-                        title="Tüm notları düzenleyebilir"
+                        title={lang === "tr" ? "Tüm notları düzenleyebilir" : "Can edit all notes"}
                       >
-                        Tümü
+                        {t("mcpBtnAll")}
                       </button>
                       <button
                         type="button"
                         className={`mcp-modal__perm-btn ${mcpStatus?.allowAiEdit === "none" ? "mcp-modal__perm-btn--active" : ""}`}
                         onClick={() => handleSetPermissionSetting("allowAiEdit", "none")}
-                        title="Hiçbir notu düzenleyemez"
+                        title={lang === "tr" ? "Hiçbir notu düzenleyemez" : "Cannot edit any notes"}
                       >
-                        Kapalı
+                        {t("mcpBtnOff")}
                       </button>
                     </div>
                   </div>
 
                   <div className="mcp-modal__perm-row">
                     <div className="mcp-modal__perm-info">
-                      <span className="mcp-modal__perm-label">Not & Görev Silme Yetkisi</span>
+                      <span className="mcp-modal__perm-label">{t("mcpDeletePermissionLabel")}</span>
                       <span className="mcp-modal__perm-desc">
                         {mcpStatus?.allowAiDelete === "all"
-                          ? "Tüm not ve görevleri silebilir."
+                          ? t("mcpDeleteAllDesc")
                           : mcpStatus?.allowAiDelete === "none"
-                          ? "Hiçbir notu veya görevi silemez."
-                          : "Sadece AI'ın kendi oluşturduğu projeleri ve notları silebilir."}
+                          ? t("mcpDeleteNoneDesc")
+                          : t("mcpDeleteOnlyAiDesc")}
                       </span>
                     </div>
                     <div className="mcp-modal__perm-options">
@@ -1926,25 +2030,25 @@ export default function Dashboard() {
                         type="button"
                         className={`mcp-modal__perm-btn ${(!mcpStatus?.allowAiDelete || mcpStatus.allowAiDelete === "only_ai") ? "mcp-modal__perm-btn--active" : ""}`}
                         onClick={() => handleSetPermissionSetting("allowAiDelete", "only_ai")}
-                        title="Yalnızca AI'ın oluşturduğu notları ve projeleri silebilir"
+                        title={lang === "tr" ? "Yalnızca AI'ın oluşturduğu notları ve projeleri silebilir" : "Can only delete projects and notes created by AI"}
                       >
-                        Yalnızca AI
+                        {t("mcpBtnOnlyAi")}
                       </button>
                       <button
                         type="button"
                         className={`mcp-modal__perm-btn ${mcpStatus?.allowAiDelete === "all" ? "mcp-modal__perm-btn--active" : ""}`}
                         onClick={() => handleSetPermissionSetting("allowAiDelete", "all")}
-                        title="Tüm not ve görevleri silebilir"
+                        title={lang === "tr" ? "Tüm not ve görevleri silebilir" : "Can delete all notes and tasks"}
                       >
-                        Tümü
+                        {t("mcpBtnAll")}
                       </button>
                       <button
                         type="button"
                         className={`mcp-modal__perm-btn ${mcpStatus?.allowAiDelete === "none" ? "mcp-modal__perm-btn--active" : ""}`}
                         onClick={() => handleSetPermissionSetting("allowAiDelete", "none")}
-                        title="Hiçbir şeyi silemez"
+                        title={lang === "tr" ? "Hiçbir şeyi silemez" : "Cannot delete anything"}
                       >
-                        Kapalı
+                        {t("mcpBtnOff")}
                       </button>
                     </div>
                   </div>
@@ -1953,14 +2057,14 @@ export default function Dashboard() {
 
               {/* Log actions */}
               <div className="mcp-modal__log-header">
-                <span className="mcp-modal__log-title">Son AI Aktiviteleri (Canlı)</span>
+                <span className="mcp-modal__log-title">{t("mcpRecentLogs")}</span>
                 {mcpStatus?.logs && mcpStatus.logs.length > 0 && (
                   <button
                     type="button"
                     className="btn btn--secondary mcp-modal__clear-btn"
                     onClick={handleClearMcpLogs}
                   >
-                    Günlüğü Temizle
+                    {t("mcpClearLogs")}
                   </button>
                 )}
               </div>
@@ -1968,7 +2072,7 @@ export default function Dashboard() {
               {/* Log entries */}
               {!mcpStatus?.logs || mcpStatus.logs.length === 0 ? (
                 <div className="mcp-modal__empty">
-                  Henüz bir AI modeli (Antigravity / Claude / Cursor) işlem gerçekleştirmedi.
+                  {t("mcpNoLogsYet")}
                 </div>
               ) : (
                 <div className="mcp-modal__log-list">
@@ -1989,7 +2093,7 @@ export default function Dashboard() {
             <div className="modal-card__footer">
               <div className="modal-card__footer-left">
                 <span className="mcp-modal__footer-hint">
-                  Yapay zeka modelleri bu tünel üzerinden notlarınızı, görevlerinizi ve ekran görüntülerinizi okuyup yazabilir.
+                  {t("mcpFooterHint")}
                 </span>
               </div>
               <button
@@ -1997,7 +2101,317 @@ export default function Dashboard() {
                 className="btn btn--secondary"
                 onClick={() => setIsMcpModalOpen(false)}
               >
-                Kapat
+                {lang === "tr" ? "Kapat" : "Close"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div className="modal-overlay" onClick={() => setIsSettingsOpen(false)}>
+          <div className="modal-card modal-card--settings" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-card__header">
+              <div className="modal-card__title-box">
+                <span className="modal-card__title">⚙️ {t("settingsTitle")}</span>
+              </div>
+              <button
+                type="button"
+                className="modal-card__close-btn"
+                onClick={() => setIsSettingsOpen(false)}
+                title={lang === "tr" ? "Kapat (Esc)" : "Close (Esc)"}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Settings Tabs */}
+            <div className="settings-tabs">
+              <button
+                type="button"
+                className={`settings-tab-btn ${settingsTab === "appearance" ? "settings-tab-btn--active" : ""}`}
+                onClick={() => setSettingsTab("appearance")}
+              >
+                🎨 {t("appearance")}
+              </button>
+              <button
+                type="button"
+                className={`settings-tab-btn ${settingsTab === "shortcuts" ? "settings-tab-btn--active" : ""}`}
+                onClick={() => setSettingsTab("shortcuts")}
+              >
+                ⌨️ {t("shortcuts")}
+              </button>
+              <button
+                type="button"
+                className={`settings-tab-btn ${settingsTab === "about" ? "settings-tab-btn--active" : ""}`}
+                onClick={() => setSettingsTab("about")}
+              >
+                ℹ️ {t("about")}
+              </button>
+            </div>
+
+            {/* Settings Body */}
+            <div className="settings-body">
+              {settingsTab === "appearance" && (
+                <>
+                  {/* Language Selection */}
+                  <div className="settings-group">
+                    <span className="settings-group__title">{t("languageLabel")}</span>
+                    <div className="settings-grid">
+                      <div
+                        className={`settings-card ${lang === "tr" ? "settings-card--active" : ""}`}
+                        onClick={() => handleLanguageChange("tr")}
+                      >
+                        <div className="settings-card__radio">
+                          <div className="settings-card__radio-inner" />
+                        </div>
+                        <div className="settings-card__info">
+                          <span className="settings-card__title">🇹🇷 Türkçe</span>
+                          <span className="settings-card__desc">Varsayılan dil</span>
+                        </div>
+                      </div>
+
+                      <div
+                        className={`settings-card ${lang === "en" ? "settings-card--active" : ""}`}
+                        onClick={() => handleLanguageChange("en")}
+                      >
+                        <div className="settings-card__radio">
+                          <div className="settings-card__radio-inner" />
+                        </div>
+                        <div className="settings-card__info">
+                          <span className="settings-card__title">🇬🇧 English</span>
+                          <span className="settings-card__desc">English localization</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Theme Selection */}
+                  <div className="settings-group">
+                    <span className="settings-group__title">{t("themeLabel")}</span>
+                    <div className="settings-grid">
+                      {/* Amber */}
+                      <div
+                        className={`settings-card ${theme === "amber" ? "settings-card--active" : ""}`}
+                        onClick={() => handleThemeChange("amber")}
+                      >
+                        <div
+                          className="settings-theme-swatch"
+                          style={{ background: "linear-gradient(135deg, #1c1c20 50%, #e5a95d 50%)" }}
+                        />
+                        <div className="settings-card__info">
+                          <span className="settings-card__title">{t("themeAmber")}</span>
+                          <span className="settings-card__desc">{t("themeAmberDesc")}</span>
+                        </div>
+                      </div>
+
+                      {/* OLED */}
+                      <div
+                        className={`settings-card ${theme === "oled" ? "settings-card--active" : ""}`}
+                        onClick={() => handleThemeChange("oled")}
+                      >
+                        <div
+                          className="settings-theme-swatch"
+                          style={{ background: "linear-gradient(135deg, #000000 50%, #f59e0b 50%)" }}
+                        />
+                        <div className="settings-card__info">
+                          <span className="settings-card__title">{t("themeOled")}</span>
+                          <span className="settings-card__desc">{t("themeOledDesc")}</span>
+                        </div>
+                      </div>
+
+                      {/* Emerald */}
+                      <div
+                        className={`settings-card ${theme === "emerald" ? "settings-card--active" : ""}`}
+                        onClick={() => handleThemeChange("emerald")}
+                      >
+                        <div
+                          className="settings-theme-swatch"
+                          style={{ background: "linear-gradient(135deg, #0b1512 50%, #10b981 50%)" }}
+                        />
+                        <div className="settings-card__info">
+                          <span className="settings-card__title">{t("themeEmerald")}</span>
+                          <span className="settings-card__desc">{t("themeEmeraldDesc")}</span>
+                        </div>
+                      </div>
+
+                      {/* Slate */}
+                      <div
+                        className={`settings-card ${theme === "slate" ? "settings-card--active" : ""}`}
+                        onClick={() => handleThemeChange("slate")}
+                      >
+                        <div
+                          className="settings-theme-swatch"
+                          style={{ background: "linear-gradient(135deg, #0f141c 50%, #60a5fa 50%)" }}
+                        />
+                        <div className="settings-card__info">
+                          <span className="settings-card__title">{t("themeSlate")}</span>
+                          <span className="settings-card__desc">{t("themeSlateDesc")}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {settingsTab === "shortcuts" && (
+                <div className="shortcuts-table">
+                  {/* Interactive Quick Capture Shortcut Row */}
+                  <div className="shortcuts-row shortcuts-row--capture">
+                    <span className="shortcuts-row__desc">{t("shortcutQuickCapture")}</span>
+                    <div className="shortcuts-row__keys">
+                      {captureShortcut.split("+").map((keyPart, i) => (
+                        <kbd key={i} className="shortcut-kbd">{keyPart.trim()}</kbd>
+                      ))}
+                      <button
+                        type="button"
+                        className="shortcuts-row__edit-btn"
+                        onClick={() => {
+                          setIsEditingShortcut(!isEditingShortcut);
+                          setShortcutDraft(captureShortcut);
+                          setShortcutError("");
+                        }}
+                        title={t("shortcutEditBtn")}
+                      >
+                        ✏️ {t("shortcutEditBtn")}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Editing Panel for Quick Capture */}
+                  {isEditingShortcut && (
+                    <div className="shortcut-edit-panel">
+                      <div className="shortcut-presets">
+                        <span className="shortcut-edit-hint">
+                          {lang === "tr" ? "Hızlı Seçim:" : "Presets:"}
+                        </span>
+                        {["Ctrl+Shift+N", "Alt+Space", "Ctrl+Alt+N", "Ctrl+Shift+Space"].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            className={`shortcut-preset-btn ${shortcutDraft === preset ? "shortcut-preset-btn--active" : ""}`}
+                            onClick={() => {
+                              setShortcutDraft(preset);
+                              handleSaveCaptureShortcut(preset);
+                            }}
+                          >
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="shortcut-input-row">
+                        <input
+                          type="text"
+                          className="shortcut-text-input"
+                          value={shortcutDraft}
+                          onChange={(e) => setShortcutDraft(e.target.value)}
+                          placeholder={t("shortcutPlaceholder")}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn--primary"
+                          onClick={() => handleSaveCaptureShortcut()}
+                        >
+                          {t("shortcutSaveBtn")}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn--secondary"
+                          onClick={() => {
+                            setIsEditingShortcut(false);
+                            setShortcutError("");
+                          }}
+                        >
+                          {t("cancel")}
+                        </button>
+                      </div>
+
+                      <div className="shortcut-edit-footer">
+                        <span className="shortcut-edit-hint">{t("shortcutHint")}</span>
+                        {captureShortcut !== "Ctrl+Shift+N" && (
+                          <button
+                            type="button"
+                            className="shortcuts-row__edit-btn"
+                            onClick={handleResetCaptureShortcut}
+                          >
+                            ↺ {t("shortcutResetBtn")}
+                          </button>
+                        )}
+                      </div>
+
+                      {shortcutError && (
+                        <span className="shortcut-feedback--error">{shortcutError}</span>
+                      )}
+                      {shortcutStatus && (
+                        <span className="shortcut-feedback--success">{shortcutStatus}</span>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="shortcuts-row">
+                    <span className="shortcuts-row__desc">{t("shortcutSearch")}</span>
+                    <div className="shortcuts-row__keys">
+                      <kbd className="shortcut-kbd">Ctrl</kbd>
+                      <kbd className="shortcut-kbd">F</kbd>
+                    </div>
+                  </div>
+                  <div className="shortcuts-row">
+                    <span className="shortcuts-row__desc">{t("shortcutSave")}</span>
+                    <div className="shortcuts-row__keys">
+                      <kbd className="shortcut-kbd">Ctrl</kbd>
+                      <kbd className="shortcut-kbd">S</kbd>
+                    </div>
+                  </div>
+                  <div className="shortcuts-row">
+                    <span className="shortcuts-row__desc">{t("shortcutPaste")}</span>
+                    <div className="shortcuts-row__keys">
+                      <kbd className="shortcut-kbd">Ctrl</kbd>
+                      <kbd className="shortcut-kbd">V</kbd>
+                    </div>
+                  </div>
+                  <div className="shortcuts-row">
+                    <span className="shortcuts-row__desc">{t("shortcutEsc")}</span>
+                    <div className="shortcuts-row__keys">
+                      <kbd className="shortcut-kbd">Esc</kbd>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "about" && (
+                <div className="about-panel">
+                  <div className="about-logo">
+                    Mind<span>Pipe</span>
+                  </div>
+                  <p className="about-desc">{t("aboutDesc")}</p>
+                  <div className="about-meta">
+                    <span className="about-meta__item">{t("versionLabel")}: <strong>v0.1.0</strong></span>
+                    <span className="about-meta__item">{t("licenseLabel")}: <strong>MIT</strong></span>
+                  </div>
+                  <button
+                    type="button"
+                    className="about-github-btn"
+                    onClick={() => openUrl("https://github.com/YusufB5/MindPipe")}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+                    </svg>
+                    <span>{t("viewOnGithub")}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-card__footer">
+              <div className="modal-card__footer-left" />
+              <button
+                type="button"
+                className="btn btn--secondary"
+                onClick={() => setIsSettingsOpen(false)}
+              >
+                {lang === "tr" ? "Kapat" : "Close"}
               </button>
             </div>
           </div>

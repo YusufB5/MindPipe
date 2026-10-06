@@ -18,6 +18,39 @@
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
 }
 
+[data-theme="oled"] {
+  --bg: #090a0c;
+  --bg-subtle: #101115;
+  --surface: #16171d;
+  --surface-hover: #1e1f27;
+  --border: #262732;
+  --border-subtle: #1c1d25;
+  --spine: #f5b967;
+  --spine-dim: #a8793b;
+}
+
+[data-theme="emerald"] {
+  --bg: #0d1311;
+  --bg-subtle: #131b18;
+  --surface: #192420;
+  --surface-hover: #21302b;
+  --border: #283a34;
+  --border-subtle: #1e2c27;
+  --spine: #4ebd8f;
+  --spine-dim: #2e835f;
+}
+
+[data-theme="slate"] {
+  --bg: #11141b;
+  --bg-subtle: #171c26;
+  --surface: #1e2432;
+  --surface-hover: #262e3f;
+  --border: #2c364b;
+  --border-subtle: #222a3a;
+  --spine: #63a0f9;
+  --spine-dim: #386db9;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -352,14 +385,39 @@ button {
   padding: 16px 0 12px;
 }
 
+.dashboard__sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 0 16px;
+  margin-bottom: 10px;
+}
+
 .dashboard__sidebar-title {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 700;
   color: var(--text-dim);
-  padding: 0 16px;
-  margin-bottom: 10px;
+}
+
+.dashboard__settings-trigger-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-dim);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  padding: 0;
+}
+
+.dashboard__settings-trigger-btn:hover {
+  color: var(--spine);
+  background: var(--surface);
+  transform: rotate(45deg);
 }
 
 .dashboard__projects-list {
@@ -2792,4 +2850,378 @@ body.is-reordering-cards * {
   border-color: var(--spine-dim);
   background: var(--surface-hover);
 }
+
+/* ---------- Settings Modal ---------- */
+
+.settings-modal {
+  max-width: 620px;
+  width: 100%;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 18px 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.settings-tab-btn:hover {
+  color: var(--text);
+}
+
+.settings-tab-btn--active {
+  color: var(--spine);
+  border-bottom-color: var(--spine);
+  font-weight: 600;
+}
+
+.settings-body {
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  overflow-y: auto;
+  max-height: 65vh;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-group__title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.settings-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  text-align: left;
+}
+
+.settings-card:hover {
+  background: var(--surface-hover);
+  border-color: #3e4250;
+}
+
+.settings-card--active {
+  border-color: var(--spine) !important;
+  background: var(--surface-hover);
+  box-shadow: 0 0 12px rgba(229, 169, 93, 0.15);
+}
+
+.settings-card__radio {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.settings-card--active .settings-card__radio {
+  border-color: var(--spine);
+}
+
+.settings-card__radio-inner {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--spine);
+  opacity: 0;
+  transform: scale(0.5);
+  transition: all 0.15s ease;
+}
+
+.settings-card--active .settings-card__radio-inner {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.settings-card__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-card__desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
+.settings-theme-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Shortcuts list in modal */
+.shortcuts-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcuts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  gap: 12px;
+}
+
+.shortcuts-row__desc {
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.shortcuts-row__keys {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.shortcut-kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 3px 7px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--spine);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.shortcuts-row__edit-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-left: 6px;
+}
+
+.shortcuts-row__edit-btn:hover {
+  color: var(--spine);
+  border-color: var(--spine-dim);
+  background: var(--surface-hover);
+}
+
+.shortcut-edit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface-hover);
+  border: 1px solid var(--spine-dim);
+  border-radius: 6px;
+  margin-top: 2px;
+}
+
+.shortcut-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.shortcut-preset-btn {
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.shortcut-preset-btn:hover {
+  color: var(--spine);
+  border-color: var(--spine);
+}
+
+.shortcut-preset-btn--active {
+  border-color: var(--spine);
+  color: var(--spine);
+  background: rgba(229, 169, 93, 0.1);
+  font-weight: 600;
+}
+
+.shortcut-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shortcut-text-input {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.shortcut-text-input:focus {
+  border-color: var(--spine);
+}
+
+.shortcut-edit-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.shortcut-edit-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.shortcut-feedback--success {
+  font-size: 11px;
+  color: #10b981;
+}
+
+.shortcut-feedback--error {
+  font-size: 11px;
+  color: #ef4444;
+}
+
+/* About tab */
+.about-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  padding: 10px 0;
+}
+
+.about-logo {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.about-logo span {
+  color: var(--spine);
+}
+
+.about-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 420px;
+  line-height: 1.6;
+}
+
+.about-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.about-meta__item {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+
+.about-github-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  background: var(--surface);
+  border: 1px solid var(--spine-dim);
+  border-radius: 6px;
+  color: var(--spine);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-top: 6px;
+}
+
+.about-github-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--spine);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
 
