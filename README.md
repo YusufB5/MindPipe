@@ -11,7 +11,7 @@
 <a name="english"></a>
 ## English
 
-MindPipe is a lightweight, local-first desktop devlog station and AI context bridge built with Tauri v2, Rust, and React. It functions as an instant capture tool, a chronological DevLog stream, an integrated task manager, and a real-time knowledge provider for AI agents via the Model Context Protocol (MCP).
+MindPipe is a lightweight, local-first desktop application and AI context bridge built with Tauri, Rust, and React. It serves as an instant capture tool, visual project dashboard, and real-time knowledge provider for AI agents via the Model Context Protocol (MCP).
 
 All data is stored directly on your local file system as plain Markdown (`.md`) and standard PNG (`.png`) files. There is no cloud lock-in, no telemetry, and no proprietary database format.
 
