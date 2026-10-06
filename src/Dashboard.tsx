@@ -44,41 +44,56 @@ function formatTimestamp(ms: number): string {
   )}:${pad(d.getMinutes())}`;
 }
 
-function AiChipIcon({ size = 12, className = "" }: { size?: number; className?: string }) {
+function renderDevLogContent(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const lines = trimmed.split("\n");
+  return (
+    <div className="devlog-text">
+      {lines.map((line, i) => {
+        const l = line.trim();
+        if (l.startsWith("### ")) {
+          return <h4 key={i} className="devlog-h3">{l.substring(4)}</h4>;
+        }
+        if (l.startsWith("## ")) {
+          return <h3 key={i} className="devlog-h2">{l.substring(3)}</h3>;
+        }
+        if (l.startsWith("# ")) {
+          return <h2 key={i} className="devlog-h1">{l.substring(2)}</h2>;
+        }
+        if (l.startsWith("- ") || l.startsWith("* ")) {
+          return (
+            <div key={i} className="devlog-bullet">
+              <span className="devlog-bullet-dot">•</span>
+              <span>{l.substring(2)}</span>
+            </div>
+          );
+        }
+        if (!l) {
+          return <div key={i} className="devlog-spacer" />;
+        }
+        return (
+          <p key={i} className="devlog-p">
+            {line}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function AiSparkleIcon({ size = 11, className = "" }: { size?: number; className?: string }) {
   return (
     <svg
       width={size}
       height={size}
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={`ai-chip-icon ${className}`}
+      fill="currentColor"
+      className={`ai-sparkle-icon ${className}`}
+      aria-hidden="true"
     >
-      <rect x="4.5" y="4.5" width="15" height="15" rx="3" stroke="currentColor" fill="rgba(56, 189, 248, 0.08)" />
-      <line x1="9" y1="1.5" x2="9" y2="4.5" />
-      <line x1="15" y1="1.5" x2="15" y2="4.5" />
-      <line x1="9" y1="19.5" x2="9" y2="22.5" />
-      <line x1="15" y1="19.5" x2="15" y2="22.5" />
-      <line x1="1.5" y1="9" x2="4.5" y2="9" />
-      <line x1="1.5" y1="15" x2="4.5" y2="15" />
-      <line x1="19.5" y1="9" x2="22.5" y2="9" />
-      <line x1="19.5" y1="15" x2="22.5" y2="15" />
-      <text
-        x="12"
-        y="14.4"
-        textAnchor="middle"
-        fontSize="7.2"
-        fontWeight="800"
-        letterSpacing="-0.3px"
-        fill="currentColor"
-        stroke="none"
-        fontFamily="system-ui, -apple-system, sans-serif"
-      >
-        AI
-      </text>
+      <path d="M12 2Q12 12 2 12Q12 12 12 22Q12 12 22 12Q12 12 12 2Z" />
     </svg>
   );
 }
@@ -127,6 +142,14 @@ export default function Dashboard() {
 
   // Lightbox state for full-size image viewing
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+
+  // DevLog Stream states
+  const [noteContents, setNoteContents] = useState<Record<string, string>>({});
+  const [inlineEditingPath, setInlineEditingPath] = useState<string | null>(null);
+  const [inlineDraftText, setInlineDraftText] = useState("");
+  const [inlineStatus, setInlineStatus] = useState("");
+  const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({});
 
   // MCP Status & Logs state
   const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
@@ -226,6 +249,20 @@ export default function Dashboard() {
     try {
       const list = await listEntries(project);
       setEntries(list);
+
+      // Load full contents for DevLog stream
+      const noteEntries = list.filter((e) => e.kind === "note" || e.kind === "mixed");
+      const contents: Record<string, string> = {};
+      await Promise.all(
+        noteEntries.map(async (entry) => {
+          try {
+            contents[entry.path] = await readNote(entry.path);
+          } catch {
+            contents[entry.path] = entry.preview || "";
+          }
+        })
+      );
+      setNoteContents(contents);
     } finally {
       if (!isSilent) setLoading(false);
     }
@@ -266,6 +303,7 @@ export default function Dashboard() {
     if (active) {
       refreshEntries(active);
       refreshTodos(active);
+      setExpandedNotes({});
     }
   }, [active]);
 
@@ -366,12 +404,22 @@ export default function Dashboard() {
 
     // Ignore interactive children
     const target = e.target as HTMLElement;
+    const isDirectHandle = Boolean(target.closest(".devlog-item__drag-handle, .entry__drag-handle"));
+
     if (
-      target.closest("button") ||
-      target.closest("input") ||
-      target.closest("a") ||
-      target.closest(".entry__thumb") ||
-      target.closest(".entry__thumb-wrap")
+      !isDirectHandle &&
+      (
+        target.closest("button") ||
+        target.closest("input") ||
+        target.closest("textarea") ||
+        target.closest("a") ||
+        target.closest(".devlog-item__image") ||
+        target.closest(".devlog-item__gallery") ||
+        target.closest(".devlog-item__editor-wrap") ||
+        target.closest(".devlog-item__content") ||
+        target.closest(".entry__thumb") ||
+        target.closest(".entry__thumb-wrap")
+      )
     ) {
       return;
     }
@@ -379,7 +427,6 @@ export default function Dashboard() {
     const startX = e.clientX;
     const startY = e.clientY;
     const fromIndex = index;
-    const isDirectHandle = Boolean(target.closest(".entry__drag-handle"));
     let dragStarted = false;
 
     if (isDirectHandle) {
@@ -399,9 +446,34 @@ export default function Dashboard() {
       }
 
       if (dragStarted) {
-        // Element under point (dragged card has pointer-events: none, so it looks through to cards below)
+        // 1. Check if cursor is back over the original dragged card's area (cancel/abort intent):
+        const origCardEl = document.querySelector(`.devlog-item[data-index="${fromIndex}"], .entry[data-index="${fromIndex}"]`);
+        if (origCardEl) {
+          const origRect = origCardEl.getBoundingClientRect();
+          if (
+            moveEvt.clientX >= origRect.left &&
+            moveEvt.clientX <= origRect.right &&
+            moveEvt.clientY >= origRect.top &&
+            moveEvt.clientY <= origRect.bottom
+          ) {
+            setPointerDropIndex(fromIndex);
+            return;
+          }
+        }
+
+        // 2. Check if cursor moved outside horizontal stream boundaries (e.g. into sidebar or off-screen to cancel):
+        const listEl = document.querySelector(".devlog-stream, .entries-list");
+        if (listEl) {
+          const listRect = listEl.getBoundingClientRect();
+          if (moveEvt.clientX < listRect.left - 40 || moveEvt.clientX > listRect.right + 40) {
+            setPointerDropIndex(fromIndex);
+            return;
+          }
+        }
+
+        // 3. Element under point
         const el = document.elementFromPoint(moveEvt.clientX, moveEvt.clientY);
-        const cardEl = el?.closest(".entry[data-index]");
+        const cardEl = el?.closest(".devlog-item[data-index], .entry[data-index]");
         if (cardEl) {
           const idxStr = cardEl.getAttribute("data-index");
           if (idxStr !== null) {
@@ -412,12 +484,11 @@ export default function Dashboard() {
           }
         } else {
           // If cursor went slightly above or below the list
-          const listEl = document.querySelector(".entries-list");
           if (listEl) {
             const listRect = listEl.getBoundingClientRect();
-            if (moveEvt.clientY < listRect.top + 20) {
+            if (moveEvt.clientY < listRect.top + 30) {
               setPointerDropIndex(0);
-            } else if (moveEvt.clientY > listRect.bottom - 20) {
+            } else if (moveEvt.clientY > listRect.bottom - 30) {
               setPointerDropIndex(entriesRef.current.length - 1);
             }
           }
@@ -601,6 +672,56 @@ export default function Dashboard() {
     }
   }
 
+  function startInlineEdit(entry: EntryMeta) {
+    setInlineEditingPath(entry.path);
+    setInlineDraftText(noteContents[entry.path] ?? entry.preview ?? "");
+    setInlineStatus("");
+  }
+
+  async function handleSaveInlineNote(entry: EntryMeta) {
+    try {
+      setInlineStatus("Kaydediliyor...");
+      await updateNote(entry.path, inlineDraftText);
+      setNoteContents((prev) => ({ ...prev, [entry.path]: inlineDraftText }));
+      setExpandedNotes((prev) => ({ ...prev, [entry.path]: true }));
+      setInlineStatus("Kaydedildi ✓");
+      setTimeout(() => {
+        setInlineEditingPath(null);
+        setInlineStatus("");
+      }, 400);
+      await refreshEntries(active, true);
+    } catch (err) {
+      setInlineStatus(`Hata: ${String(err)}`);
+    }
+  }
+
+  function toggleNoteExpand(path: string) {
+    setExpandedNotes((prev) => ({
+      ...prev,
+      [path]: !prev[path],
+    }));
+  }
+
+  async function handleCopyEntryText(entry: EntryMeta, e: React.MouseEvent) {
+    e.stopPropagation();
+    const text = noteContents[entry.path] ?? entry.preview ?? "";
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedPath(entry.path);
+      setTimeout(() => setCopiedPath(null), 1800);
+    } catch {}
+  }
+
+  async function handleDeleteImageInline(_entry: EntryMeta, imgPath: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      await deleteImageFile(imgPath);
+      await refreshEntries(active, true);
+    } catch (err) {
+      alert(`Görsel silinemedi: ${String(err)}`);
+    }
+  }
+
   async function handleCreateDirectNote(e: React.FormEvent) {
     e.preventDefault();
     if (!newNoteContent.trim()) return;
@@ -651,6 +772,22 @@ export default function Dashboard() {
     }
 
     async function onWindowPaste(e: ClipboardEvent) {
+      if (inlineEditingPath) {
+        const dataUrl = await extractImageFromPasteEvent(e);
+        if (dataUrl) {
+          e.preventDefault();
+          try {
+            const stripped = stripDataUrlPrefix(dataUrl);
+            await attachImageToEntry(inlineEditingPath, stripped);
+            setInlineStatus("Yeni görsel eklendi ✓");
+            setTimeout(() => setInlineStatus(""), 2200);
+            await refreshEntries(active, true);
+          } catch (err) {
+            alert(`Görsel eklenemedi: ${String(err)}`);
+          }
+          return;
+        }
+      }
       if (editingEntry) {
         const dataUrl = await extractImageFromPasteEvent(e);
         if (dataUrl) {
@@ -680,7 +817,7 @@ export default function Dashboard() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("paste", onWindowPaste);
     };
-  }, [editingEntry, editorContent, lightboxImage, isCreatingNote, searchQuery, active]);
+  }, [editingEntry, editorContent, lightboxImage, isCreatingNote, searchQuery, active, inlineEditingPath]);
 
   return (
     <div className="dashboard">
@@ -722,13 +859,14 @@ export default function Dashboard() {
                       <span className="dashboard__project-mcp-dot" />
                     </button>
                   )}
-                  <span className="dashboard__project-name">{p}</span>
-                  {mcpStatus?.aiProjects?.includes(p) && (
-                    <span className="dashboard__ai-badge" title="Bu proje AI tarafından oluşturuldu">
-                      <AiChipIcon size={12} />
-                      <span>AI</span>
-                    </span>
-                  )}
+                  <span
+                    className={`dashboard__project-name ${
+                      mcpStatus?.aiProjects?.includes(p) ? "dashboard__project-name--ai" : ""
+                    }`}
+                    title={mcpStatus?.aiProjects?.includes(p) ? "Bu proje AI tarafından oluşturuldu" : undefined}
+                  >
+                    {p}
+                  </span>
                 </div>
                 <div className="dashboard__project-actions">
                   <button
@@ -817,8 +955,7 @@ export default function Dashboard() {
                 <h1 title={active}>{active}</h1>
                 {mcpStatus?.aiProjects?.includes(active) && (
                   <span className="dashboard__ai-badge" title="Bu proje AI tarafından oluşturuldu">
-                    <AiChipIcon size={12} />
-                    <span>AI</span>
+                    <AiSparkleIcon size={12} />
                   </span>
                 )}
                 <span className="dashboard__entry-badge">
@@ -965,8 +1102,7 @@ export default function Dashboard() {
                                 <span className="todo-item__text">{todo.text}</span>
                                 {todo.isAi && (
                                   <span className="todo-item__ai-chip" title="Bu görev AI tarafından oluşturuldu">
-                                    <AiChipIcon size={11} />
-                                    <span>AI</span>
+                                    <AiSparkleIcon size={11} />
                                   </span>
                                 )}
                               </label>
@@ -1006,8 +1142,7 @@ export default function Dashboard() {
                                 <span className="todo-item__text">{todo.text}</span>
                                 {todo.isAi && (
                                   <span className="todo-item__ai-chip" title="Bu görev AI tarafından oluşturuldu">
-                                    <AiChipIcon size={11} />
-                                    <span>AI</span>
+                                    <AiSparkleIcon size={11} />
                                   </span>
                                 )}
                               </label>
@@ -1145,8 +1280,7 @@ export default function Dashboard() {
                               )}
                               {item.entry.isAi && (
                                 <span className="entry__ai-tag" title="AI tarafından oluşturuldu">
-                                  <AiChipIcon size={11} />
-                                  <span>AI</span>
+                                  <AiSparkleIcon size={11} />
                                 </span>
                               )}
                             </div>
@@ -1169,7 +1303,7 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <div
-                  className={`entries-list ${pointerDragIndex !== null ? "entries-list--dragging-active" : ""}`}
+                  className={`devlog-stream ${pointerDragIndex !== null ? "devlog-stream--dragging-active entries-list--dragging-active" : ""}`}
                 >
                   {entries.map((entry, idx) => {
                     const isDragging = pointerDragIndex === idx;
@@ -1177,108 +1311,223 @@ export default function Dashboard() {
                     const dropDirection = isDropTarget
                       ? (pointerDropIndex! > pointerDragIndex! ? "below" : "above")
                       : null;
+                    const isInlineEditing = inlineEditingPath === entry.path;
+                    const fullContent = noteContents[entry.path] ?? entry.preview ?? "";
+                    const isLong = fullContent.length > 380 || fullContent.split("\n").filter((l) => l.trim().length > 0).length > 7;
+                    const isExpanded = Boolean(expandedNotes[entry.path]);
+                    const shouldClamp = isLong && !isExpanded && !isInlineEditing;
 
                     return (
-                      <div
+                      <article
                         key={entry.id || entry.path}
                         data-index={idx}
-                        className={`entry ${entry.pinned ? "entry--pinned" : ""} ${isDragging ? "entry--pointer-dragging" : ""} ${dropDirection ? `entry--drop-target entry--drop-target-${dropDirection}` : ""}`}
+                        className={`devlog-item ${entry.pinned ? "devlog-item--pinned" : ""} ${isDragging ? "devlog-item--dragging" : ""} ${dropDirection ? `devlog-item--drop-target-${dropDirection}` : ""}`}
                         onPointerDown={(e) => handleStartCardDrag(e, idx)}
-                        onClick={() => {
-                          if (isDraggingCardRef.current) return;
-                          handleOpenEntryModal(entry);
-                        }}
                       >
-                        <div
-                          className="entry__drag-handle"
-                          title="Sıralamak için sürükleyip bırakın"
-                        >
-                          ⠿
-                        </div>
-                        {entry.imagePaths && entry.imagePaths.length > 0 && (
-                          <div className="entry__thumb-wrap">
-                            <img
-                              className="entry__thumb"
-                              src={convertFileSrc(entry.imagePaths[0])}
-                              alt=""
-                              draggable={false}
-                              title="Büyütmek için tıklayın"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setLightboxImage(entry.imagePaths[0]);
-                              }}
-                            />
-                            {entry.imagePaths.length > 1 && (
-                              <span className="entry__thumb-count">
-                                +{entry.imagePaths.length - 1}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        <div className="entry__body">
-                          <div className="entry__tags">
+                        {/* DevLog Item Header */}
+                        <header className="devlog-item__header">
+                          <div className="devlog-item__meta">
+                            <div
+                              className="devlog-item__drag-handle"
+                              title="Sıralamak için sürükleyin"
+                            >
+                              ⠿
+                            </div>
+
                             {entry.pinned && (
-                              <div className="entry__pinned-tag">
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                              <div className="devlog-item__pinned-badge" title="Başa sabitlendi">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                                   <path d="M16 3H8v2h1v5l-2 3v2h5v6l1 1 1-1v-6h5v-2l-2-3V5h1V3z" />
                                 </svg>
                                 <span>Sabitlendi</span>
                               </div>
                             )}
+
                             {entry.isAi && (
-                              <div className="entry__ai-tag" title="Bu not AI tarafından oluşturuldu / yönetildi">
-                                <AiChipIcon size={11} />
-                                <span>AI</span>
-                              </div>
+                              <span className="entry__ai-tag" title="AI tarafından oluşturuldu">
+                                <AiSparkleIcon size={11} />
+                              </span>
                             )}
+
+                            <time className="devlog-item__time">
+                              {formatTimestamp(entry.modified)}
+                            </time>
                           </div>
-                          <div className="entry__preview">
-                            {entry.preview ? entry.preview : entry.kind === "image" ? "Ekran görüntüsü" : "(Boş Not)"}
+
+                          {/* Quick Actions Toolbar */}
+                          <div className="devlog-item__actions">
+                            <button
+                              type="button"
+                              className="devlog-action-btn"
+                              title="Metni Kopyala"
+                              onClick={(e) => handleCopyEntryText(entry, e)}
+                            >
+                              {copiedPath === entry.path ? "Kopyalandı ✓" : "Kopyala"}
+                            </button>
+
+                            <button
+                              type="button"
+                              className={`devlog-action-btn ${entry.pinned ? "devlog-action-btn--pinned" : ""}`}
+                              title={entry.pinned ? "Sabitlemeyi Kaldır" : "Başa Sabitle"}
+                              onClick={(e) => handleTogglePin(entry, e)}
+                            >
+                              {entry.pinned ? "Sabiti Kaldır" : "📌 Sabitle"}
+                            </button>
+
+                            <button
+                              type="button"
+                              className="devlog-action-btn"
+                              title={isInlineEditing ? "Düzenlemeyi Kapat" : "Düzenle"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isInlineEditing) {
+                                  setInlineEditingPath(null);
+                                } else {
+                                  startInlineEdit(entry);
+                                }
+                              }}
+                            >
+                              ✏️ {isInlineEditing ? "Kapat" : "Düzenle"}
+                            </button>
+
+                            <button
+                              type="button"
+                              className="devlog-action-btn devlog-action-btn--delete"
+                              title="Sil"
+                              onClick={(e) => handleDeleteEntry(entry, e)}
+                            >
+                              🗑️
+                            </button>
                           </div>
-                          <div className="entry__meta">{formatTimestamp(entry.modified)}</div>
+                        </header>
+
+                        {/* DevLog Item Body */}
+                        <div className="devlog-item__body">
+                          {/* Attached Screenshots Reel */}
+                          {entry.imagePaths && entry.imagePaths.length > 0 && (
+                            <div className="devlog-item__gallery">
+                              {entry.imagePaths.map((imgPath, imgIdx) => (
+                                <div key={imgIdx} className="devlog-item__gallery-card">
+                                  <img
+                                    src={convertFileSrc(imgPath)}
+                                    alt=""
+                                    className="devlog-item__image"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setLightboxImage(imgPath);
+                                    }}
+                                    title="Tam boyutta büyütmek için tıklayın"
+                                  />
+                                  {isInlineEditing && (
+                                    <button
+                                      type="button"
+                                      className="devlog-item__image-delete"
+                                      title="Bu görseli kaldır"
+                                      onClick={(e) => handleDeleteImageInline(entry, imgPath, e)}
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Content: Inline Editor or Direct Readable Text */}
+                          {isInlineEditing ? (
+                            <div className="devlog-item__editor-wrap" onClick={(e) => e.stopPropagation()}>
+                              <textarea
+                                className="devlog-item__editor"
+                                value={inlineDraftText}
+                                onChange={(e) => setInlineDraftText(e.target.value)}
+                                placeholder="Not içeriğini düzenleyin... (Ctrl+S ile kaydet)"
+                                autoFocus
+                                rows={Math.max(4, Math.min(18, (inlineDraftText.split("\n").length + 2)))}
+                                onKeyDown={(e) => {
+                                  if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+                                    e.preventDefault();
+                                    handleSaveInlineNote(entry);
+                                  } else if (e.key === "Escape") {
+                                    setInlineEditingPath(null);
+                                  }
+                                }}
+                              />
+                              <div className="devlog-item__editor-actions">
+                                <div className="devlog-item__editor-left">
+                                  <button
+                                    type="button"
+                                    className="btn btn--primary"
+                                    onClick={() => handleSaveInlineNote(entry)}
+                                  >
+                                    💾 Kaydet (Ctrl+S)
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn--secondary"
+                                    onClick={() => setInlineEditingPath(null)}
+                                  >
+                                    İptal (Esc)
+                                  </button>
+                                  {inlineStatus && (
+                                    <span className="devlog-item__status">{inlineStatus}</span>
+                                  )}
+                                </div>
+                                <span className="devlog-item__editor-hint">
+                                  Ctrl+V ile görsel ekleyebilirsiniz
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div
+                              className={`devlog-item__content ${shouldClamp ? "devlog-item__content--clamped" : ""}`}
+                              onDoubleClick={() => startInlineEdit(entry)}
+                              title="Düzenlemek için çift tıklayın"
+                            >
+                              {renderDevLogContent(fullContent)}
+                              {!fullContent.trim() && (!entry.imagePaths || entry.imagePaths.length === 0) && (
+                                <span className="devlog-empty">(Boş kayıt)</span>
+                              )}
+                            </div>
+                          )}
                         </div>
 
-                        <div className="entry__actions">
-                          <button
-                            type="button"
-                            className={`entry__action-btn ${entry.pinned ? "entry__action-btn--pinned" : ""}`}
-                            title={entry.pinned ? "Sabitlemeyi Kaldır" : "Başa Sabitle"}
-                            onClick={(e) => handleTogglePin(entry, e)}
-                            aria-label="Sabitle"
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill={entry.pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M16 3H8v2h1v5l-2 3v2h5v6l1 1 1-1v-6h5v-2l-2-3V5h1V3z" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            className="entry__action-btn"
-                            title="Düzenle / İncele"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenEntryModal(entry);
-                            }}
-                            aria-label="Düzenle"
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            className="entry__action-btn entry__action-btn--delete"
-                            title="Sil"
-                            onClick={(e) => handleDeleteEntry(entry, e)}
-                            aria-label="Sil"
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <polyline points="3 6 5 6 21 6" />
-                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
+                        {/* Dashed DevLog Divider or Seam Boundary with Button */}
+                        {shouldClamp ? (
+                          <div className="devlog-item__divider devlog-item__divider--with-btn">
+                            <button
+                              type="button"
+                              className="devlog-expand-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleNoteExpand(entry.path);
+                              }}
+                            >
+                              <span>Devamını Gör</span>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="6 9 12 15 18 9" />
+                              </svg>
+                            </button>
+                          </div>
+                        ) : isLong && isExpanded && !isInlineEditing ? (
+                          <div className="devlog-item__divider devlog-item__divider--with-btn">
+                            <button
+                              type="button"
+                              className="devlog-collapse-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleNoteExpand(entry.path);
+                              }}
+                            >
+                              <span>Daha az göster</span>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="18 15 12 9 6 15" />
+                              </svg>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="devlog-item__divider" />
+                        )}
+                      </article>
                     );
                   })}
                 </div>
@@ -1297,8 +1546,7 @@ export default function Dashboard() {
                 <span className="modal-card__title">{editingEntry.name}</span>
                 {editingEntry.isAi && (
                   <span className="entry__ai-tag" title="Bu not AI tarafından oluşturuldu / yönetildi">
-                    <AiChipIcon size={11} />
-                    <span>AI</span>
+                    <AiSparkleIcon size={11} />
                   </span>
                 )}
                 <span className="modal-card__date">
