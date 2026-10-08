@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Notes Dashboard - Model Context Protocol (MCP) Server
+ * MindPipe - Model Context Protocol (MCP) Server
  * Standard JSON-RPC 2.0 stdio server providing isolated project context,
  * notes, and TODOs to AI models (Antigravity, Cursor, Claude Desktop, etc.)
  */
@@ -16,7 +16,7 @@ function getProjectsRoot() {
     ? path.join(process.env.HOME, "Library", "Application Support")
     : path.join(process.env.HOME, ".config"));
   
-  return path.join(appData, "com.notesdashboard.app", "projects");
+  return path.join(appData, "com.mindpipe.app", "projects");
 }
 
 function sanitizeName(name) {

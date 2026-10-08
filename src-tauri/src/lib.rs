@@ -121,7 +121,7 @@ struct McpStatus {
     logs: Vec<McpLogEntry>,
 }
 
-/// Root folder for all projects, e.g. `%APPDATA%/com.notesdashboard.app/projects`.
+/// Root folder for all projects, e.g. `%APPDATA%/com.mindpipe.app/projects`.
 /// Creates itself (and an "inbox" project) on first use.
 fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app

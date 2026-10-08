@@ -72,9 +72,9 @@ All data is stored directly on your local file system as plain Markdown (`.md`) 
 - **Frontend:** React 18, TypeScript, Vite, with zero external UI framework dependencies.
 - **MCP Server:** Embedded Node.js script communicating via standard input/output (`stdio`).
 - **Storage Location:**
-  - Windows: `%APPDATA%\com.notesdashboard.app\projects\<project>\`
-  - macOS: `~/Library/Application Support/com.notesdashboard.app/projects/<project>/`
-  - Linux: `~/.config/com.notesdashboard.app/projects/<project>/`
+  - Windows: `%APPDATA%\com.mindpipe.app\projects\<project>\`
+  - macOS: `~/Library/Application Support/com.mindpipe.app/projects/<project>/`
+  - Linux: `~/.config/com.mindpipe.app/projects/<project>/`
 
 ---
 
@@ -93,7 +93,7 @@ You can copy your pre-filled, personal configuration snippet directly by opening
     "mindpipe": {
       "command": "node",
       "args": [
-        "C:\\Users\\<YOUR_USERNAME>\\AppData\\Roaming\\com.notesdashboard.app\\mcp-server.cjs"
+        "C:\\Users\\<YOUR_USERNAME>\\AppData\\Roaming\\com.mindpipe.app\\mcp-server.cjs"
       ]
     }
   }
@@ -106,7 +106,7 @@ You can copy your pre-filled, personal configuration snippet directly by opening
 ```toml
 [mcp_servers.mindpipe]
 command = "node"
-args = ['C:\Users\<YOUR_USERNAME>\AppData\Roaming\com.notesdashboard.app\mcp-server.cjs']
+args = ['C:\Users\<YOUR_USERNAME>\AppData\Roaming\com.mindpipe.app\mcp-server.cjs']
 ```
 
 ---
@@ -209,7 +209,7 @@ MindPipe'ı açıp sol alttaki MCP Durum çubuğuna tıkladığınızda sistemin
     "mindpipe": {
       "command": "node",
       "args": [
-        "C:\\Users\\<KULLANICI_ADINIZ>\\AppData\\Roaming\\com.notesdashboard.app\\mcp-server.cjs"
+        "C:\\Users\\<KULLANICI_ADINIZ>\\AppData\\Roaming\\com.mindpipe.app\\mcp-server.cjs"
       ]
     }
   }
@@ -222,7 +222,7 @@ MindPipe'ı açıp sol alttaki MCP Durum çubuğuna tıkladığınızda sistemin
 ```toml
 [mcp_servers.mindpipe]
 command = "node"
-args = ['C:\Users\<KULLANICI_ADINIZ>\AppData\Roaming\com.notesdashboard.app\mcp-server.cjs']
+args = ['C:\Users\<KULLANICI_ADINIZ>\AppData\Roaming\com.mindpipe.app\mcp-server.cjs']
 ```
 
 ---

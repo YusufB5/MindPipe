@@ -105,7 +105,7 @@ export const translations = {
     shortcutHint: "Birden fazla tuşu '+' ile birleştirin (örn. Alt+Space, Ctrl+Alt+N).",
 
     // About
-    aboutDesc: "Geliştiriciler ve üretken beyinler için hafif, yerel ve AI-uyumlu devlog & not alma istasyonu.",
+    aboutDesc: "Geliştiriciler için hafif, yerel ve AI-uyumlu not alma istasyonu.",
     versionLabel: "Sürüm",
     githubRepo: "GitHub Deposu",
     viewOnGithub: "GitHub'da İncele ↗",
@@ -264,7 +264,7 @@ export const translations = {
     shortcutHint: "Combine keys with '+' (e.g. Alt+Space, Ctrl+Alt+N).",
 
     // About
-    aboutDesc: "A lightweight, local-first, AI-ready devlog & notes station for builders and developers.",
+    aboutDesc: "A lightweight, local-first and AI-ready note-taking station.",
     versionLabel: "Version",
     githubRepo: "GitHub Repository",
     viewOnGithub: "View on GitHub ↗",
