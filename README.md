@@ -15,6 +15,16 @@ MindPipe is a lightweight, local-first desktop application and AI context bridge
 
 All data is stored directly on your local file system as plain Markdown (`.md`) and standard PNG (`.png`) files. There is no cloud lock-in, no telemetry, and no proprietary database format.
 
+### Download
+
+| Platform | Recommended Package | Type |
+| :--- | :--- | :--- |
+| **Windows** | [Download `.exe` Setup](https://github.com/YusufB5/MindPipe/releases/latest) | Installer (x64) |
+| **macOS** | [Download `.dmg`](https://github.com/YusufB5/MindPipe/releases/latest) | Apple Silicon & Intel |
+| **Linux** | [Download `.AppImage`](https://github.com/YusufB5/MindPipe/releases/latest) | Portable (Universal) |
+
+> 💡 All packages and alternative formats (`.msi`, `.deb`) are available on the **[Releases Page](https://github.com/YusufB5/MindPipe/releases/latest)**.
+
 ---
 
 ### Showcase
@@ -142,6 +152,16 @@ Compiled outputs will be located in `src-tauri/target/release/bundle/nsis/` and 
 MindPipe, Tauri, Rust ve React ile geliştirilmiş, hafif ve yerel öncelikli (local-first) masaüstü programı ve yapay zeka bağlam köprüsüdür. Hem hızlı bir not ve ekran görüntüsü yakalama aracı, hem kronolojik bir DevLog akışı, hem entegre bir görev yöneticisi, hem de Model Context Protocol (MCP) üzerinden yapay zeka ajanlarına doğrudan yapılandırılmış proje bilgisi aktaran bir terminaldir.
 
 Tüm veriler doğrudan yerel dosya sisteminizde düz Markdown (`.md`) ve standart görsel (`.png`) dosyaları olarak tutulur. Bulut zorunluluğu, telemetri takibi ve kapalı veritabanı formatları bulunmaz.
+
+### İndir
+
+| Platform | Önerilen Paket | Tür |
+| :--- | :--- | :--- |
+| **Windows** | [`.exe` Kurulum Dosyasını İndir](https://github.com/YusufB5/MindPipe/releases/latest) | Kurulum Sihirbazı (x64) |
+| **macOS** | [`.dmg` İndir](https://github.com/YusufB5/MindPipe/releases/latest) | Apple Silicon & Intel |
+| **Linux** | [`.AppImage` İndir](https://github.com/YusufB5/MindPipe/releases/latest) | Taşınabilir (Universal) |
+
+> 💡 Tüm bağımsız kurulum paketleri ve alternatif formatlar (`.msi`, `.deb`) **[Releases Sayfasında](https://github.com/YusufB5/MindPipe/releases/latest)** yer almaktadır.
 
 ---
 
