@@ -496,6 +496,26 @@ function setNoteParent(projectName, noteName, parentName) {
   return { success: true, file, project: clean, parent: parentFile };
 }
 
+// One line per note (no JSON scaffolding): far fewer tokens for the same information.
+function formatNoteList(res) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const when = (iso) => {
+    const t = new Date(iso);
+    return `${pad(t.getDate())}.${pad(t.getMonth() + 1)} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+  };
+  const lines = [`${res.project}: ${res.returned}/${res.total} not (kr=karakter, 📌 sabitli, ↳ alt not, ↑ üst not)`];
+  for (const n of res.notes) {
+    let line = `${n.pinned ? "📌 " : ""}${n.file} · ${n.title}`;
+    if (n.summary) line += ` — ${n.summary.slice(0, 90)}`;
+    if (n.tags.length) line += ` [${n.tags.join(", ")}]`;
+    line += ` · ${n.chars}kr · ${when(n.modified)}`;
+    if (n.parent) line += ` · ↑ ${n.parent}`;
+    lines.push(line);
+    for (const c of n.children || []) lines.push(`  ↳ ${c.file} · ${c.title}`);
+  }
+  return lines.join("\n");
+}
+
 function readNote(projectName, noteName) {
   const { clean, dir } = accessibleDir(projectName);
   const file = findNoteFile(dir, noteName);
@@ -1002,7 +1022,7 @@ const TOOLS = [
   },
   {
     name: "notes_list_notes",
-    description: "Projedeki notların hafif dizinini döner: başlık, kısa özet, etiketler, sabitli mi, değişiklik zamanı, üst/alt not bilgisi. Tam içerik yok (token dostu). Sabitliler önce, sonra en yeni. 'tag' ve 'limit' ile daraltılabilir; 'limit' ile son değişen notları almak için kullan.",
+    description: "Projedeki notların hafif dizinini döner, not başına tek satır: dosya adı · başlık — kısa özet [etiketler] · karakter sayısı · tarih. 📌=sabitli, ↳=alt not, ↑=üst not. Tam içerik yok (token dostu). Sabitliler önce, sonra en yeni. 'tag' ve 'limit' ile daraltılabilir; 'limit' ile son değişen notları almak için kullan. Tam içerik için notes_read_note.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1255,7 +1275,7 @@ function logMcpActivity(toolName, project, details) {
       } else if (name === "notes_list_notes") {
         const res = listNotes(args.project, args.tag, args.limit, args.parent);
         logMcpActivity("notes_list_notes", args.project, `Not dizini okudu (${res.returned}/${res.total})`);
-        respond({ content: [{ type: "text", text: JSON.stringify(res, null, 2) }] });
+        respond({ content: [{ type: "text", text: formatNoteList(res) }] });
       } else if (name === "notes_read_note") {
         const text = readNote(args.project, args.noteName);
         logMcpActivity("notes_read_note", args.project, `Not okudu: ${args.noteName}`);
