@@ -146,7 +146,8 @@ export default function Dashboard() {
   // Note hierarchy state
   const [pointerNestIndex, setPointerNestIndex] = useState<number | null>(null);
   const nestIndexRef = useRef<number | null>(null);
-  const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
+  // Sub-notes are hidden by default; opened via the toggle, "read more" or after adding/nesting one.
+  const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({});
   const [newNoteParentId, setNewNoteParentId] = useState<string | null>(null);
 
   // AI permission overrides + trash state
@@ -838,8 +839,12 @@ export default function Dashboard() {
           setPointerDragIndex((srcIdx) => {
             const roots = rootEntriesRef.current;
             if (srcIdx !== null && nestTarget !== null && roots[srcIdx] && roots[nestTarget]) {
-              setEntryParent(active, roots[srcIdx].id, roots[nestTarget].id)
-                .then(() => refreshEntries(active, true))
+              const targetId = roots[nestTarget].id;
+              setEntryParent(active, roots[srcIdx].id, targetId)
+                .then(() => {
+                  setExpandedParents((prev) => ({ ...prev, [targetId]: true }));
+                  return refreshEntries(active, true);
+                })
                 .catch((err) => alert(String(err)));
             } else if (srcIdx !== null && targetIdx !== null && srcIdx !== targetIdx) {
               const updatedRoots = [...roots];
@@ -1097,6 +1102,7 @@ export default function Dashboard() {
         const created = after.find((en) => !knownIds.has(en.id));
         if (created) {
           await setEntryParent(active, created.id, parentId).catch((err) => alert(String(err)));
+          setExpandedParents((prev) => ({ ...prev, [parentId]: true }));
         }
       }
       setNewNoteContent("");
@@ -1881,7 +1887,7 @@ export default function Dashboard() {
                                     title={t("subNotesCount")(childList.length)}
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      setCollapsedParents((prev) => ({ ...prev, [entry.id]: !prev[entry.id] }));
+                                      setExpandedParents((prev) => ({ ...prev, [entry.id]: !prev[entry.id] }));
                                     }}
                                   >
                                     <svg
@@ -1893,7 +1899,7 @@ export default function Dashboard() {
                                       strokeWidth="3"
                                       strokeLinecap="round"
                                       strokeLinejoin="round"
-                                      style={{ transform: collapsedParents[entry.id] ? "rotate(-90deg)" : "none" }}
+                                      style={{ transform: expandedParents[entry.id] ? "none" : "rotate(-90deg)" }}
                                     >
                                       <polyline points="6 9 12 15 18 9" />
                                     </svg>
@@ -2151,6 +2157,7 @@ export default function Dashboard() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 toggleNoteExpand(entry.path);
+                                if (childList.length > 0) setExpandedParents((prev) => ({ ...prev, [entry.id]: true }));
                               }}
                             >
                               <span>{t("readMore")}</span>
@@ -2167,6 +2174,7 @@ export default function Dashboard() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 toggleNoteExpand(entry.path);
+                                if (childList.length > 0) setExpandedParents((prev) => ({ ...prev, [entry.id]: false }));
                               }}
                             >
                               <span>{t("showLess")}</span>
@@ -2181,7 +2189,7 @@ export default function Dashboard() {
 
                         {isNestTarget && <div className="devlog-nest-hint">↳ {t("nestHint")}</div>}
 
-                        {childList.length > 0 && !collapsedParents[entry.id] && (
+                        {childList.length > 0 && expandedParents[entry.id] && (
                           <div className="devlog-children">
                             {childList.map((child) => renderCard(child, -1, true))}
                           </div>
