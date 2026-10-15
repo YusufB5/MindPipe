@@ -4005,3 +4005,54 @@ body.is-reordering-cards * {
 .dashboard__quick-note-parent-clear:hover {
   color: #ef4444;
 }
+
+/* UI polish: calmer header, tags on their own row, expandable sub-notes */
+.devlog-item--child .devlog-item__divider:not(.devlog-item__divider--with-btn) {
+  display: none;
+}
+
+.devlog-item--child .devlog-item__divider--with-btn {
+  margin-top: 4px;
+}
+
+.devlog-item__header {
+  align-items: center;
+}
+
+.devlog-item__tags-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0 0;
+}
+
+.devlog-tag-add-btn--icon {
+  padding: 3px 5px;
+  border-radius: 50%;
+  line-height: 0;
+  opacity: 0;
+}
+
+.devlog-item:hover .devlog-tag-add-btn--icon,
+.devlog-item__tags-row .devlog-tag-add-btn--icon,
+.devlog-tag-add-btn--icon:focus-visible {
+  opacity: 0.7;
+}
+
+.devlog-item:hover .devlog-tag-add-btn--icon:hover,
+.devlog-item__tags-row .devlog-tag-add-btn--icon:hover {
+  opacity: 1;
+}
+
+.devlog-children-toggle {
+  gap: 4px;
+  padding: 1px 7px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  outline: none;
+}
+
+.devlog-children-toggle:focus-visible {
+  border-color: var(--spine);
+}

@@ -1470,22 +1470,6 @@ export default function Dashboard() {
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                 </svg>
               </button>
-
-              {/* Delete Project Icon Button */}
-              {active !== "inbox" && (
-                <button
-                  type="button"
-                  className="dashboard__icon-btn dashboard__icon-btn--danger"
-                  onClick={() => handleDeleteProject(active)}
-                  title={t("deleteProject")}
-                  aria-label={t("deleteProject")}
-                >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                  </svg>
-                </button>
-              )}
             </div>
           </div>
 
@@ -1843,6 +1827,23 @@ export default function Dashboard() {
                         const renderCard = (entry: EntryMeta, idx: number, isChild: boolean): React.ReactNode => {
                         const childList = isChild || flatMode ? [] : entries.filter((e) => e.parentId === entry.id);
                         const isNestTarget = !isChild && pointerNestIndex === idx;
+                        const tagAddButton = (
+                          <button
+                            type="button"
+                            className="devlog-tag-add-btn devlog-tag-add-btn--icon"
+                            title={t("manageTags")}
+                            aria-label={t("manageTags")}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTagModalEntry(entry);
+                            }}
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                              <line x1="7" y1="7" x2="7.01" y2="7" />
+                            </svg>
+                          </button>
+                        );
                         const isDragging = pointerDragIndex === idx;
                         const isDropTarget = pointerDropIndex === idx && pointerDragIndex !== null && pointerDragIndex !== idx;
                         const dropDirection = isDropTarget
@@ -1877,13 +1878,26 @@ export default function Dashboard() {
                                   <button
                                     type="button"
                                     className="devlog-children-toggle"
+                                    title={t("subNotesCount")(childList.length)}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       setCollapsedParents((prev) => ({ ...prev, [entry.id]: !prev[entry.id] }));
                                     }}
                                   >
-                                    <span>{collapsedParents[entry.id] ? "▸" : "▾"}</span>
-                                    <span>{t("subNotesCount")(childList.length)}</span>
+                                    <svg
+                                      width="9"
+                                      height="9"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="3"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      style={{ transform: collapsedParents[entry.id] ? "rotate(-90deg)" : "none" }}
+                                    >
+                                      <polyline points="6 9 12 15 18 9" />
+                                    </svg>
+                                    <span>{childList.length}</span>
                                   </button>
                                 )}
 
@@ -1906,42 +1920,8 @@ export default function Dashboard() {
                                   {formatTimestamp(entry.modified)}
                                 </time>
 
-                                {/* Tags list */}
-                                <div className="devlog-item__tags">
-                                  {(entry.tags || []).map((tagName) => {
-                                    const color = projectTags[tagName] || "#f59e0b";
-                                    return (
-                                      <span
-                                        key={tagName}
-                                        className="devlog-tag-badge devlog-tag-badge--removable"
-                                        style={{ "--tag-color": color } as React.CSSProperties}
-                                        title={lang === "tr" ? `"${tagName}" etiketini bu nottan kaldırmak için tıklayın` : `Click to remove "${tagName}" tag`}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleToggleTagOnEntry(entry, tagName);
-                                        }}
-                                      >
-                                        <span className="devlog-tag-badge__dot" />
-                                        <span>{tagName}</span>
-                                        <span className="devlog-tag-badge__close" aria-hidden="true">✕</span>
-                                      </span>
-                                    );
-                                  })}
-                                  <button
-                                    type="button"
-                                    className="devlog-tag-add-btn"
-                                    title={t("manageTags")}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setTagModalEntry(entry);
-                                    }}
-                                  >
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                      <path d="M12 5v14M5 12h14" />
-                                    </svg>
-                                    <span>{t("addTag")}</span>
-                                  </button>
-                                </div>
+                                {/* Untagged notes keep a single-line header: icon-only add-tag button */}
+                                {(entry.tags || []).length === 0 && tagAddButton}
                               </div>
 
                           {/* Quick Actions Toolbar */}
@@ -2024,6 +2004,32 @@ export default function Dashboard() {
                             </button>
                           </div>
                         </header>
+
+                        {/* Tags live on their own row so the header never wraps awkwardly */}
+                        {(entry.tags || []).length > 0 && (
+                          <div className="devlog-item__tags-row">
+                            {(entry.tags || []).map((tagName) => {
+                              const color = projectTags[tagName] || "#f59e0b";
+                              return (
+                                <span
+                                  key={tagName}
+                                  className="devlog-tag-badge devlog-tag-badge--removable"
+                                  style={{ "--tag-color": color } as React.CSSProperties}
+                                  title={lang === "tr" ? `"${tagName}" etiketini bu nottan kaldırmak için tıklayın` : `Click to remove "${tagName}" tag`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleTagOnEntry(entry, tagName);
+                                  }}
+                                >
+                                  <span className="devlog-tag-badge__dot" />
+                                  <span>{tagName}</span>
+                                  <span className="devlog-tag-badge__close" aria-hidden="true">✕</span>
+                                </span>
+                              );
+                            })}
+                            {tagAddButton}
+                          </div>
+                        )}
 
                         {/* DevLog Item Body */}
                         <div className="devlog-item__body">
