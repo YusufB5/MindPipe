@@ -168,6 +168,20 @@ export interface McpLogEntry {
   details: string;
 }
 
+export interface ProjectPermOverride {
+  allowAiEdit?: string;
+  allowAiDelete?: string;
+}
+
+export interface TrashItem {
+  file: string;
+  original: string;
+  preview: string;
+  deletedAt: number;
+  deletedBy: string;
+  tags: string[];
+}
+
 export interface McpStatus {
   isConfigured: boolean;
   allowedAll: boolean;
@@ -179,6 +193,7 @@ export interface McpStatus {
   aiProjects: string[];
   allowAiEdit: string;
   allowAiDelete: string;
+  projectOverrides: Record<string, ProjectPermOverride>;
   serverScriptPath?: string;
   logs: McpLogEntry[];
 }
@@ -231,4 +246,31 @@ export function setEntryTags(
 /** Deletes a tag definition and removes it from all entries in the project. */
 export function deleteProjectTag(project: string, name: string): Promise<void> {
   return invoke("delete_project_tag", { project, name });
+}
+
+/** Sets one per-project AI permission override; `value` null follows the global setting. */
+export function setProjectPermissionOverride(
+  project: string,
+  key: "allowAiEdit" | "allowAiDelete",
+  value: string | null
+): Promise<void> {
+  return invoke("set_project_permission_override", { project, key, value });
+}
+
+/** Removes all permission overrides of a project. */
+export function clearProjectPermissionOverride(project: string): Promise<void> {
+  return invoke("clear_project_permission_override", { project });
+}
+
+/** Lists notes the AI moved to the project's trash. */
+export function listTrash(project: string): Promise<TrashItem[]> {
+  return invoke("list_trash", { project });
+}
+
+export function restoreTrashItem(project: string, file: string): Promise<void> {
+  return invoke("restore_trash_item", { project, file });
+}
+
+export function purgeTrashItem(project: string, file: string): Promise<void> {
+  return invoke("purge_trash_item", { project, file });
 }

@@ -103,6 +103,30 @@ struct McpPermissions {
     allow_ai_edit: String,
     #[serde(default = "default_only_ai")]
     allow_ai_delete: String,
+    /// Per-project overrides keyed by lowercase project name. A missing field means "follow global".
+    #[serde(default)]
+    project_overrides: std::collections::BTreeMap<String, ProjectPermOverride>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+struct ProjectPermOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allow_ai_edit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allow_ai_delete: Option<String>,
+}
+
+fn load_permissions(perm_path: &PathBuf) -> McpPermissions {
+    fs::read_to_string(perm_path)
+        .ok()
+        .and_then(|c| serde_json::from_str::<McpPermissions>(&c).ok())
+        .unwrap_or_else(|| McpPermissions {
+            blocked_projects: Vec::new(),
+            allow_ai_edit: "only_ai".into(),
+            allow_ai_delete: "only_ai".into(),
+            project_overrides: Default::default(),
+        })
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -118,6 +142,7 @@ struct McpStatus {
     ai_projects: Vec<String>,
     allow_ai_edit: String,
     allow_ai_delete: String,
+    project_overrides: std::collections::BTreeMap<String, ProjectPermOverride>,
     server_script_path: Option<String>,
     logs: Vec<McpLogEntry>,
 }
@@ -212,6 +237,164 @@ fn toggle_pin_entry(app: AppHandle, project: String, entry_id: String) -> Result
     save_pinned_ids(&dir, &ids)?;
     let _ = app.emit("notes-updated", ());
     Ok(is_pinned)
+}
+
+/// A note the AI moved to `<project>/.trash` (restorable from the app).
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TrashItem {
+    file: String,
+    original: String,
+    preview: String,
+    deleted_at: u64,
+    deleted_by: String,
+    tags: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TrashMeta {
+    #[serde(default)]
+    original: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    pinned: bool,
+    #[serde(default)]
+    deleted_at: u64,
+    #[serde(default)]
+    deleted_by: String,
+}
+
+fn trash_dir(app: &AppHandle, project: &str) -> Result<(PathBuf, PathBuf), String> {
+    let clean = sanitize_name(project)?;
+    let dir = projects_root(app)?.join(clean);
+    let trash = dir.join(".trash");
+    Ok((dir, trash))
+}
+
+fn read_trash_meta(trash: &PathBuf) -> HashMap<String, TrashMeta> {
+    fs::read_to_string(trash.join(".meta.json"))
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default()
+}
+
+fn write_trash_meta(trash: &PathBuf, meta: &HashMap<String, TrashMeta>) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(meta).map_err(|e| e.to_string())?;
+    fs::write(trash.join(".meta.json"), json).map_err(|e| e.to_string())
+}
+
+/// Rejects anything that is not a plain file name inside `.trash`.
+fn safe_trash_file(file: &str) -> Result<(), String> {
+    if file.is_empty() || file.starts_with('.') || file.contains('/') || file.contains('\\') || file.contains("..") {
+        return Err("Geçersiz dosya adı".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn list_trash(app: AppHandle, project: String) -> Result<Vec<TrashItem>, String> {
+    let (_, trash) = trash_dir(&app, &project)?;
+    if !trash.exists() {
+        return Ok(vec![]);
+    }
+    let meta = read_trash_meta(&trash);
+    let mut items: Vec<TrashItem> = fs::read_dir(&trash)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| {
+            let file = e.file_name().to_string_lossy().to_string();
+            if file.starts_with('.') {
+                return None;
+            }
+            let m = meta.get(&file).cloned().unwrap_or_default();
+            let modified = e
+                .metadata()
+                .ok()
+                .and_then(|md| md.modified().ok())
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let preview = if file.ends_with(".md") {
+                fs::read_to_string(e.path())
+                    .map(|c| c.trim().chars().take(140).collect::<String>())
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            Some(TrashItem {
+                original: if m.original.is_empty() { file.clone() } else { m.original },
+                file,
+                preview,
+                deleted_at: if m.deleted_at > 0 { m.deleted_at } else { modified },
+                deleted_by: if m.deleted_by.is_empty() { "ai".into() } else { m.deleted_by },
+                tags: m.tags,
+            })
+        })
+        .collect();
+    items.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+    Ok(items)
+}
+
+#[tauri::command]
+fn restore_trash_item(app: AppHandle, project: String, file: String) -> Result<(), String> {
+    safe_trash_file(&file)?;
+    let (dir, trash) = trash_dir(&app, &project)?;
+    let src = trash.join(&file);
+    if !src.is_file() {
+        return Err("Çöp kutusunda bulunamadı".into());
+    }
+    let mut meta = read_trash_meta(&trash);
+    let m = meta.remove(&file).unwrap_or_default();
+
+    let original = if m.original.is_empty() { file.clone() } else { m.original.clone() };
+    safe_trash_file(&original)?;
+    let mut dest = dir.join(&original);
+    if dest.exists() {
+        let p = PathBuf::from(&original);
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("restored");
+        let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("md");
+        dest = dir.join(format!("{}_restored.{}", stem, ext));
+    }
+    fs::rename(&src, &dest).map_err(|e| e.to_string())?;
+    write_trash_meta(&trash, &meta)?;
+
+    let key = extract_base_key(dest.file_stem().and_then(|s| s.to_str()).unwrap_or(""));
+    if !m.tags.is_empty() {
+        let mut store = get_tag_store(&dir);
+        for t in &m.tags {
+            store.definitions.entry(t.clone()).or_insert_with(|| "#3b82f6".to_string());
+        }
+        store.entries.insert(key.clone(), m.tags.clone());
+        save_tag_store(&dir, &store)?;
+    }
+    if m.pinned {
+        let mut ids = get_pinned_ids(&dir);
+        if !ids.contains(&key) {
+            ids.push(key);
+            save_pinned_ids(&dir, &ids)?;
+        }
+    }
+    let _ = app.emit("notes-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn purge_trash_item(app: AppHandle, project: String, file: String) -> Result<(), String> {
+    safe_trash_file(&file)?;
+    let (_, trash) = trash_dir(&app, &project)?;
+    let target = trash.join(&file);
+    if target.is_file() {
+        fs::remove_file(&target).map_err(|e| e.to_string())?;
+    }
+    let mut meta = read_trash_meta(&trash);
+    if meta.remove(&file).is_some() {
+        write_trash_meta(&trash, &meta)?;
+    }
+    let _ = app.emit("notes-updated", ());
+    Ok(())
 }
 
 /// Per-project tag data stored in `.tags.json`: tag name -> hex color,
@@ -1091,15 +1274,13 @@ fn get_mcp_status(app: AppHandle) -> Result<McpStatus, String> {
 
     // Read UI permissions file (blocked projects, edit/delete scopes)
     let perm_path = app_dir.join("mcp-permissions.json");
-    let (blocked_projects, allow_ai_edit, allow_ai_delete) = if perm_path.exists() {
-        fs::read_to_string(&perm_path)
-            .ok()
-            .and_then(|c| serde_json::from_str::<McpPermissions>(&c).ok())
-            .map(|p| (p.blocked_projects, p.allow_ai_edit, p.allow_ai_delete))
-            .unwrap_or_else(|| (Vec::new(), "only_ai".into(), "only_ai".into()))
-    } else {
-        (Vec::new(), "only_ai".into(), "only_ai".into())
-    };
+    let perms = load_permissions(&perm_path);
+    let (blocked_projects, allow_ai_edit, allow_ai_delete, project_overrides) = (
+        perms.blocked_projects,
+        perms.allow_ai_edit,
+        perms.allow_ai_delete,
+        perms.project_overrides,
+    );
 
     // Scan projects for AI-created marker (.ai)
     let mut ai_projects: Vec<String> = Vec::new();
@@ -1155,6 +1336,7 @@ fn get_mcp_status(app: AppHandle) -> Result<McpStatus, String> {
         ai_projects,
         allow_ai_edit,
         allow_ai_delete,
+        project_overrides,
         server_script_path,
         logs,
     })
@@ -1167,22 +1349,7 @@ fn toggle_project_mcp_access(app: AppHandle, project: String) -> Result<bool, St
     let app_dir = root.parent().unwrap_or(&root);
     let perm_path = app_dir.join("mcp-permissions.json");
 
-    let mut permissions = if perm_path.exists() {
-        fs::read_to_string(&perm_path)
-            .ok()
-            .and_then(|c| serde_json::from_str::<McpPermissions>(&c).ok())
-            .unwrap_or_else(|| McpPermissions {
-                blocked_projects: Vec::new(),
-                allow_ai_edit: "only_ai".into(),
-                allow_ai_delete: "only_ai".into(),
-            })
-    } else {
-        McpPermissions {
-            blocked_projects: Vec::new(),
-            allow_ai_edit: "only_ai".into(),
-            allow_ai_delete: "only_ai".into(),
-        }
-    };
+    let mut permissions = load_permissions(&perm_path);
 
     let is_currently_blocked = permissions
         .blocked_projects
@@ -1212,22 +1379,7 @@ fn set_mcp_permission_setting(app: AppHandle, key: String, value: String) -> Res
     let app_dir = root.parent().unwrap_or(&root);
     let perm_path = app_dir.join("mcp-permissions.json");
 
-    let mut permissions = if perm_path.exists() {
-        fs::read_to_string(&perm_path)
-            .ok()
-            .and_then(|c| serde_json::from_str::<McpPermissions>(&c).ok())
-            .unwrap_or_else(|| McpPermissions {
-                blocked_projects: Vec::new(),
-                allow_ai_edit: "only_ai".into(),
-                allow_ai_delete: "only_ai".into(),
-            })
-    } else {
-        McpPermissions {
-            blocked_projects: Vec::new(),
-            allow_ai_edit: "only_ai".into(),
-            allow_ai_delete: "only_ai".into(),
-        }
-    };
+    let mut permissions = load_permissions(&perm_path);
 
     match key.as_str() {
         "allowAiEdit" => permissions.allow_ai_edit = value,
@@ -1238,6 +1390,54 @@ fn set_mcp_permission_setting(app: AppHandle, key: String, value: String) -> Res
     let json = serde_json::to_string_pretty(&permissions).map_err(|e| e.to_string())?;
     fs::write(&perm_path, json).map_err(|e| e.to_string())?;
 
+    let _ = app.emit("notes-updated", ());
+    Ok(())
+}
+
+/// Sets (or clears, when `value` is None/"global") one permission override for a project.
+#[tauri::command]
+fn set_project_permission_override(
+    app: AppHandle,
+    project: String,
+    key: String,
+    value: Option<String>,
+) -> Result<(), String> {
+    let root = projects_root(&app)?;
+    let app_dir = root.parent().unwrap_or(&root);
+    let perm_path = app_dir.join("mcp-permissions.json");
+    let mut permissions = load_permissions(&perm_path);
+
+    let name = project.trim().to_lowercase();
+    if name.is_empty() {
+        return Err("Geçersiz proje adı".into());
+    }
+    let value = value.filter(|v| matches!(v.as_str(), "only_ai" | "all" | "none"));
+    let entry = permissions.project_overrides.entry(name.clone()).or_default();
+    match key.as_str() {
+        "allowAiEdit" => entry.allow_ai_edit = value,
+        "allowAiDelete" => entry.allow_ai_delete = value,
+        _ => return Err("Geçersiz ayar anahtarı".into()),
+    }
+    if entry.allow_ai_edit.is_none() && entry.allow_ai_delete.is_none() {
+        permissions.project_overrides.remove(&name);
+    }
+
+    let json = serde_json::to_string_pretty(&permissions).map_err(|e| e.to_string())?;
+    fs::write(&perm_path, json).map_err(|e| e.to_string())?;
+    let _ = app.emit("notes-updated", ());
+    Ok(())
+}
+
+/// Removes every permission override of a project (it follows the global settings again).
+#[tauri::command]
+fn clear_project_permission_override(app: AppHandle, project: String) -> Result<(), String> {
+    let root = projects_root(&app)?;
+    let app_dir = root.parent().unwrap_or(&root);
+    let perm_path = app_dir.join("mcp-permissions.json");
+    let mut permissions = load_permissions(&perm_path);
+    permissions.project_overrides.remove(&project.trim().to_lowercase());
+    let json = serde_json::to_string_pretty(&permissions).map_err(|e| e.to_string())?;
+    fs::write(&perm_path, json).map_err(|e| e.to_string())?;
     let _ = app.emit("notes-updated", ());
     Ok(())
 }
@@ -1470,6 +1670,11 @@ pub fn run() {
             get_mcp_status,
             toggle_project_mcp_access,
             set_mcp_permission_setting,
+            set_project_permission_override,
+            list_trash,
+            restore_trash_item,
+            purge_trash_item,
+            clear_project_permission_override,
             clear_mcp_logs,
             get_capture_shortcut,
             update_capture_shortcut

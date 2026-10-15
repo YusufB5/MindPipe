@@ -27,6 +27,12 @@ import {
   getMcpStatus,
   toggleProjectMcpAccess,
   setMcpPermissionSetting,
+  setProjectPermissionOverride,
+  clearProjectPermissionOverride,
+  listTrash,
+  restoreTrashItem,
+  purgeTrashItem,
+  type TrashItem,
   clearMcpLogs,
   getCaptureShortcut,
   updateCaptureShortcut,
@@ -130,6 +136,11 @@ export default function Dashboard() {
   const [entries, setEntries] = useState<EntryMeta[]>([]);
   const [newProjectName, setNewProjectName] = useState("");
   const [loading, setLoading] = useState(true);
+
+  // AI permission overrides + trash state
+  const [overridePending, setOverridePending] = useState<string[]>([]);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
 
   // Tagging state
   const [projectTags, setProjectTags] = useState<Record<string, string>>({});
@@ -321,6 +332,58 @@ export default function Dashboard() {
       await refreshMcpStatus();
     } catch (err) {
       alert(lang === "tr" ? `Loglar temizlenemedi: ${String(err)}` : `Failed to clear logs: ${String(err)}`);
+    }
+  }
+
+  async function handleSetOverride(project: string, key: "allowAiEdit" | "allowAiDelete", value: string | null) {
+    try {
+      await setProjectPermissionOverride(project, key, value);
+      await refreshMcpStatus();
+    } catch (err) {
+      alert(lang === "tr" ? `Yetki ayarı kaydedilemedi: ${String(err)}` : `Failed to save permission: ${String(err)}`);
+    }
+  }
+
+  async function handleRemoveOverride(project: string) {
+    setOverridePending((prev) => prev.filter((p) => p.toLowerCase() !== project.toLowerCase()));
+    try {
+      await clearProjectPermissionOverride(project);
+      await refreshMcpStatus();
+    } catch (err) {
+      alert(lang === "tr" ? `İstisna kaldırılamadı: ${String(err)}` : `Failed to remove override: ${String(err)}`);
+    }
+  }
+
+  async function refreshTrash() {
+    try {
+      setTrashItems(await listTrash(active));
+    } catch {
+      setTrashItems([]);
+    }
+  }
+
+  async function openTrash() {
+    setTrashOpen(true);
+    await refreshTrash();
+  }
+
+  async function handleRestoreTrash(file: string) {
+    try {
+      await restoreTrashItem(active, file);
+      await refreshTrash();
+      refreshEntries(active, true);
+    } catch (err) {
+      alert(String(err));
+    }
+  }
+
+  async function handlePurgeTrash(file: string) {
+    if (!window.confirm(t("trashPurgeConfirm"))) return;
+    try {
+      await purgeTrashItem(active, file);
+      await refreshTrash();
+    } catch (err) {
+      alert(String(err));
     }
   }
 
@@ -1286,6 +1349,21 @@ export default function Dashboard() {
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                   </svg>
                 )}
+              </button>
+
+              {/* AI Trash Icon Button */}
+              <button
+                type="button"
+                className="dashboard__icon-btn"
+                onClick={openTrash}
+                title={t("trashBtn")}
+                aria-label={t("trashBtn")}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                </svg>
               </button>
 
               {/* Open Folder Icon Button */}
@@ -2346,6 +2424,96 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* Per-project permission overrides */}
+              {(() => {
+                const rank: Record<string, number> = { none: 0, only_ai: 1, all: 2 };
+                const overrides = mcpStatus?.projectOverrides ?? {};
+                const shown = projects.filter(
+                  (p) =>
+                    Object.prototype.hasOwnProperty.call(overrides, p.toLowerCase()) ||
+                    overridePending.some((x) => x.toLowerCase() === p.toLowerCase())
+                );
+                const available = projects.filter((p) => !shown.includes(p));
+                const globalOf = (key: "allowAiEdit" | "allowAiDelete") => mcpStatus?.[key] || "only_ai";
+                const rows: { key: "allowAiEdit" | "allowAiDelete"; label: string }[] = [
+                  { key: "allowAiEdit", label: t("mcpEditPermissionLabel") },
+                  { key: "allowAiDelete", label: t("mcpDeletePermissionLabel") },
+                ];
+                const options: { value: string | null; label: string }[] = [
+                  { value: null, label: t("mcpBtnGlobal") },
+                  { value: "only_ai", label: t("mcpBtnOnlyAi") },
+                  { value: "all", label: t("mcpBtnAll") },
+                  { value: "none", label: t("mcpBtnOff") },
+                ];
+                return (
+                  <div className="mcp-modal__overrides">
+                    <div className="mcp-modal__overrides-head">
+                      <div className="mcp-modal__overrides-text">
+                        <span className="mcp-modal__overrides-title">{t("mcpOverridesTitle")}</span>
+                        <span className="mcp-modal__permissions-sub">{t("mcpOverridesDesc")}</span>
+                      </div>
+                      <select
+                        className="mcp-modal__override-select"
+                        value=""
+                        disabled={available.length === 0}
+                        onChange={(e) => {
+                          const name = e.target.value;
+                          if (name) setOverridePending((prev) => [...prev, name]);
+                        }}
+                      >
+                        <option value="">{t("mcpAddOverride")}</option>
+                        {available.map((p) => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {shown.map((proj) => {
+                      const ov = overrides[proj.toLowerCase()] ?? {};
+                      return (
+                        <div key={proj} className="mcp-modal__override-card">
+                          <div className="mcp-modal__override-card-head">
+                            <span className="mcp-modal__override-name">{proj}</span>
+                            <button
+                              type="button"
+                              className="mcp-modal__override-remove"
+                              title={t("mcpOverrideRemove")}
+                              onClick={() => handleRemoveOverride(proj)}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          {rows.map(({ key, label }) => {
+                            const current = ov[key] ?? null;
+                            const exceeds = current !== null && (rank[current] ?? 1) > (rank[globalOf(key)] ?? 1);
+                            return (
+                              <div key={key} className="mcp-modal__override-row">
+                                <span className="mcp-modal__override-label">
+                                  {label}
+                                  {exceeds && <em className="mcp-modal__override-badge">{t("mcpOverrideExceeds")}</em>}
+                                </span>
+                                <div className="mcp-modal__perm-options">
+                                  {options.map((o) => (
+                                    <button
+                                      key={o.label}
+                                      type="button"
+                                      className={`mcp-modal__perm-btn ${current === o.value ? "mcp-modal__perm-btn--active" : ""}`}
+                                      onClick={() => handleSetOverride(proj, key, o.value)}
+                                    >
+                                      {o.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
               {/* Log actions */}
               <div className="mcp-modal__log-header">
                 <span className="mcp-modal__log-title">{t("mcpRecentLogs")}</span>
@@ -2747,6 +2915,43 @@ export default function Dashboard() {
       )}
 
 
+
+      {/* AI Trash Modal */}
+      {trashOpen && (
+        <div className="tag-modal-overlay" onClick={() => setTrashOpen(false)}>
+          <div className="tag-modal trash-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="tag-modal__header">
+              <div className="tag-modal__title">
+                <span>{t("trashTitle")} · {active}</span>
+              </div>
+              <button type="button" className="tag-modal__close" onClick={() => setTrashOpen(false)}>✕</button>
+            </div>
+            {trashItems.length === 0 ? (
+              <div style={{ fontSize: "12px", color: "var(--text-dim)", padding: "8px 0" }}>{t("trashEmpty")}</div>
+            ) : (
+              <div className="trash-modal__list">
+                {trashItems.map((item) => (
+                  <div key={item.file} className="trash-modal__item">
+                    <div className="trash-modal__info">
+                      <span className="trash-modal__name">{item.original}</span>
+                      <span className="trash-modal__time">{formatTimestamp(item.deletedAt)}</span>
+                      {item.preview && <span className="trash-modal__preview">{item.preview}</span>}
+                    </div>
+                    <div className="trash-modal__actions">
+                      <button type="button" className="tag-modal__btn" onClick={() => handleRestoreTrash(item.file)}>
+                        {t("trashRestore")}
+                      </button>
+                      <button type="button" className="trash-modal__purge" onClick={() => handlePurgeTrash(item.file)}>
+                        {t("trashPurge")}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Tag Picker & Manager Modal */}
       {tagModalEntry && (

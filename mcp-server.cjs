@@ -69,6 +69,7 @@ function getPermissions() {
         blockedProjects: Array.isArray(perms?.blockedProjects) ? perms.blockedProjects.map((p) => p.toLowerCase()) : [],
         allowAiEdit: perms?.allowAiEdit || "only_ai",
         allowAiDelete: perms?.allowAiDelete || "only_ai",
+        projectOverrides: perms?.projectOverrides && typeof perms.projectOverrides === "object" ? perms.projectOverrides : {},
       };
     }
   } catch (e) {}
@@ -76,7 +77,15 @@ function getPermissions() {
     blockedProjects: [],
     allowAiEdit: "only_ai",
     allowAiDelete: "only_ai",
+    projectOverrides: {},
   };
+}
+
+// Per-project override (keyed by lowercase project name) wins over the global setting.
+function effectiveMode(projectName, key) {
+  const perms = getPermissions();
+  const override = perms.projectOverrides[String(projectName).toLowerCase()];
+  return (override && override[key]) || perms[key] || "only_ai";
 }
 
 function getBlockedProjects() {
@@ -99,8 +108,7 @@ function isAiNote(fileName) {
 }
 
 function canAiEdit(projectName, fileName) {
-  const perms = getPermissions();
-  const mode = perms.allowAiEdit || "only_ai";
+  const mode = effectiveMode(projectName, "allowAiEdit");
   if (mode === "all") return true;
   if (mode === "none") return false;
   // "only_ai"
@@ -110,8 +118,7 @@ function canAiEdit(projectName, fileName) {
 }
 
 function canAiDelete(projectName, fileName) {
-  const perms = getPermissions();
-  const mode = perms.allowAiDelete || "only_ai";
+  const mode = effectiveMode(projectName, "allowAiDelete");
   if (mode === "all") return true;
   if (mode === "none") return false;
   // "only_ai"
@@ -599,6 +606,37 @@ function editProjectNote(projectName, noteName, content) {
   return { success: true, file: targetFile, project: clean };
 }
 
+function moveToTrash(dir, fileName) {
+  const trashDir = path.join(dir, ".trash");
+  fs.mkdirSync(trashDir, { recursive: true });
+
+  const key = noteKey(fileName);
+  const tags = readTagStore(dir).entries[key] || [];
+  const wasPinned = readPinnedIds(dir).includes(key);
+
+  let dest = path.join(trashDir, fileName);
+  if (fs.existsSync(dest)) {
+    const ext = path.extname(fileName);
+    dest = path.join(trashDir, `${path.basename(fileName, ext)}__${Date.now()}${ext}`);
+  }
+  fs.renameSync(path.join(dir, fileName), dest);
+
+  const metaFile = path.join(trashDir, ".meta.json");
+  let meta = {};
+  try { meta = JSON.parse(fs.readFileSync(metaFile, "utf-8")); } catch {}
+  meta[path.basename(dest)] = { original: fileName, tags, pinned: wasPinned, deletedAt: Date.now(), deletedBy: "ai" };
+  fs.writeFileSync(metaFile, JSON.stringify(meta, null, 2), "utf-8");
+
+  // Drop tags/pin of the note unless other files (e.g. screenshots) still share its key
+  const stillThere = fs.readdirSync(dir).some((f) => !f.startsWith(".") && noteKey(f) === key);
+  if (!stillThere) {
+    applyTags(dir, fileName, []);
+    if (wasPinned) {
+      fs.writeFileSync(path.join(dir, ".pinned.json"), JSON.stringify(readPinnedIds(dir).filter((i) => i !== key), null, 2), "utf-8");
+    }
+  }
+}
+
 function deleteProjectNote(projectName, noteName) {
   const clean = sanitizeName(projectName);
   if (!isProjectAllowed(clean)) {
@@ -626,14 +664,9 @@ function deleteProjectNote(projectName, noteName) {
     throw new Error(`AI Yetkilendirmesi: "${targetFile}" notunu silme yetkiniz yok. (Yalnızca AI tarafından oluşturulan içerikler silinebilir)`);
   }
 
-  const filePath = path.join(dir, targetFile);
-  fs.unlinkSync(filePath);
-
-  // Drop the note's tags unless other files (e.g. screenshots) still share its key
-  const key = noteKey(targetFile);
-  const stillThere = fs.readdirSync(dir).some((f) => !f.startsWith(".") && noteKey(f) === key);
-  if (!stillThere) applyTags(dir, targetFile, []);
-  return { success: true, file: targetFile, project: clean };
+  // Soft delete: move into .trash (restorable from the app) instead of unlinking
+  moveToTrash(dir, targetFile);
+  return { success: true, file: targetFile, project: clean, trashed: true };
 }
 
 function addProjectTodo(projectName, text) {
@@ -882,7 +915,7 @@ const TOOLS = [
   },
   {
     name: "notes_delete_note",
-    description: "Belirtilen projedeki bir notu siler. İzin politikasına tabidir (varsayılan: sadece AI'ın oluşturduğu notları silebilir).",
+    description: "Belirtilen projedeki bir notu çöp kutusuna taşır (kullanıcı uygulamadan geri alabilir). İzin politikasına tabidir (varsayılan: sadece AI'ın oluşturduğu notlar; proje bazlı istisna tanımlanabilir).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1046,8 +1079,8 @@ function logMcpActivity(toolName, project, details) {
         respond({ content: [{ type: "text", text: `Not başarıyla güncellendi: ${res.file}` }] });
       } else if (name === "notes_delete_note") {
         const res = deleteProjectNote(args.project, args.noteName);
-        logMcpActivity("notes_delete_note", args.project, `Not silindi: ${res.file}`);
-        respond({ content: [{ type: "text", text: `Not başarıyla silindi: ${res.file}` }] });
+        logMcpActivity("notes_delete_note", args.project, `Not çöp kutusuna taşındı: ${res.file}`);
+        respond({ content: [{ type: "text", text: `Not çöp kutusuna taşındı (geri alınabilir): ${res.file}` }] });
       } else if (name === "notes_add_todo") {
         const res = addProjectTodo(args.project, args.text);
         logMcpActivity("notes_add_todo", args.project, `Yeni görev ekledi: "${res.text}"`);
