@@ -139,9 +139,17 @@ export function readNote(path: string): Promise<string> {
   return invoke("read_note", { path });
 }
 
-/** Updates the text content of a note. */
-export function updateNote(path: string, content: string): Promise<void> {
-  return invoke("update_note", { path, content });
+/**
+ * Updates the text content of a note. When `expectedModified` is given and the file was
+ * changed meanwhile (e.g. by an AI agent), the backend rejects with a "CONFLICT" error.
+ */
+export function updateNote(path: string, content: string, expectedModified?: number | null): Promise<void> {
+  return invoke("update_note", { path, content, expectedModified: expectedModified ?? null });
+}
+
+/** Last-modified time (ms) of a note file, used as its version for conflict detection. */
+export function noteModified(path: string): Promise<number> {
+  return invoke("note_modified", { path });
 }
 
 /** Deletes a note or image entry (and its linked screenshots if any). */

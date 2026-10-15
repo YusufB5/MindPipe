@@ -208,6 +208,74 @@ function parseTodos(dir) {
   return items;
 }
 
+// ---- Safe file writes (same protocol as the Rust app) ----
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// Write to a temp file in the same folder, then rename over the target: readers never see a half-written file.
+function atomicWriteFileSync(file, data) {
+  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`);
+  const fd = fs.openSync(tmp, "w");
+  try {
+    fs.writeSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  let lastErr;
+  for (let i = 0; i < 8; i++) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (e) {
+      lastErr = e;
+      sleepSync(20);
+    }
+  }
+  try { fs.unlinkSync(tmp); } catch {}
+  throw lastErr;
+}
+
+// Per-project lock for read-modify-write (create-new `.lock`, stale after 5s). Re-entrant within this process.
+const heldLocks = new Set();
+function withProjectLock(dir, fn) {
+  if (heldLocks.has(dir)) return fn();
+  const lockPath = path.join(dir, ".lock");
+  const start = Date.now();
+  for (;;) {
+    try {
+      fs.closeSync(fs.openSync(lockPath, "wx"));
+      break;
+    } catch (e) {
+      if (e.code === "ENOENT") return fn(); // folder does not exist yet: nothing to protect
+      if (e.code !== "EEXIST") throw e;
+      try {
+        if (Date.now() - fs.statSync(lockPath).mtimeMs >= 5000) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch {}
+      if (Date.now() - start > 4000) {
+        throw new Error("Proje şu anda başka bir işlem tarafından kullanılıyor, tekrar deneyin.");
+      }
+      sleepSync(25);
+    }
+  }
+  heldLocks.add(dir);
+  try {
+    return fn();
+  } finally {
+    heldLocks.delete(dir);
+    try { fs.unlinkSync(lockPath); } catch {}
+  }
+}
+
+function withProjectLockByName(projectName, fn) {
+  const clean = sanitizeName(projectName);
+  return withProjectLock(path.join(getProjectsRoot(), clean), fn);
+}
+
 // ---- Tags (shared with the app via <project>/.tags.json) ----
 const TAG_PALETTE = ["#ef4444", "#f97316", "#f59e0b", "#10b981", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
 
@@ -232,7 +300,7 @@ function writeTagStore(dir, store) {
   for (const name of Object.keys(store.definitions)) {
     if (!used.has(name)) delete store.definitions[name];
   }
-  fs.writeFileSync(path.join(dir, ".tags.json"), JSON.stringify(store, null, 2), "utf-8");
+  atomicWriteFileSync(path.join(dir, ".tags.json"), JSON.stringify(store, null, 2));
 }
 
 function normalizeTags(tags) {
@@ -240,7 +308,7 @@ function normalizeTags(tags) {
   return [...new Set(tags.map((t) => String(t).trim()).filter(Boolean))];
 }
 
-function applyTags(dir, fileName, tags) {
+function _applyTags(dir, fileName, tags) {
   const clean = normalizeTags(tags);
   const store = readTagStore(dir);
   const key = noteKey(fileName);
@@ -295,11 +363,11 @@ function readTree(dir) {
 }
 
 function writeTree(dir, tree) {
-  fs.writeFileSync(path.join(dir, ".tree.json"), JSON.stringify(tree, null, 2), "utf-8");
+  atomicWriteFileSync(path.join(dir, ".tree.json"), JSON.stringify(tree, null, 2));
 }
 
 // Single level only: a parent cannot have a parent, and a note with children cannot become a child.
-function linkParent(dir, childFile, parentFile) {
+function _linkParent(dir, childFile, parentFile) {
   const childKey = noteKey(childFile);
   const tree = readTree(dir);
   if (!parentFile) {
@@ -434,6 +502,7 @@ function readNote(projectName, noteName) {
   const tags = readTagStore(dir).entries[noteKey(file)] || [];
   const pinned = readPinnedIds(dir).includes(noteKey(file));
   const content = fs.readFileSync(path.join(dir, file), "utf-8").trim();
+  const version = Math.floor(fs.statSync(path.join(dir, file)).mtimeMs);
   const parentOf = readTree(dir).parents;
   const mdFiles = fs.readdirSync(dir).filter((f) => f.endsWith(".md") && !f.startsWith("."));
   const fileOfKey = Object.fromEntries(mdFiles.map((f) => [noteKey(f), f]));
@@ -442,10 +511,10 @@ function readNote(projectName, noteName) {
   let hier = "";
   if (parentFile) hier += ` | üst not: ${parentFile}`;
   if (childFiles.length) hier += ` | alt notlar: ${childFiles.join(", ")}`;
-  return `# ${file}\nProje: ${clean}${pinned ? " | 📌 sabitli" : ""}${tags.length ? ` | etiketler: ${tags.join(", ")}` : ""}${hier}\n\n${content}\n`;
+  return `# ${file}\nProje: ${clean} | sürüm: ${version}${pinned ? " | 📌 sabitli" : ""}${tags.length ? ` | etiketler: ${tags.join(", ")}` : ""}${hier}\n\n${content}\n`;
 }
 
-function setNotePinned(projectName, noteName, pinned) {
+function _setNotePinned(projectName, noteName, pinned) {
   const { clean, dir } = accessibleDir(projectName);
   const file = findNoteFile(dir, noteName);
   const key = noteKey(file);
@@ -454,7 +523,7 @@ function setNotePinned(projectName, noteName, pinned) {
   const want = pinned === undefined ? !isPinned : Boolean(pinned);
   if (want && !isPinned) ids.push(key);
   if (!want && isPinned) ids = ids.filter((i) => i !== key);
-  fs.writeFileSync(path.join(dir, ".pinned.json"), JSON.stringify(ids, null, 2), "utf-8");
+  atomicWriteFileSync(path.join(dir, ".pinned.json"), JSON.stringify(ids, null, 2));
   return { success: true, file, project: clean, pinned: want };
 }
 
@@ -651,7 +720,7 @@ function addProjectNote(projectName, content, tags, parentName) {
   const fileName = `${ts}_ai.md`;
   const filePath = path.join(dir, fileName);
 
-  fs.writeFileSync(filePath, content.trim(), "utf-8");
+  atomicWriteFileSync(filePath, content.trim());
   const appliedTags = normalizeTags(tags).length > 0 ? applyTags(dir, fileName, tags) : [];
   let parent = null;
   if (parentName) {
@@ -666,7 +735,7 @@ function addProjectNote(projectName, content, tags, parentName) {
   return { success: true, file: fileName, project: clean, tags: appliedTags, parent };
 }
 
-function editProjectNote(projectName, noteName, content) {
+function _editProjectNote(projectName, noteName, content, expectedVersion) {
   const clean = sanitizeName(projectName);
   if (!isProjectAllowed(clean)) {
     throw new Error(`"${clean}" projesine erişim izni bulunmuyor.`);
@@ -694,11 +763,19 @@ function editProjectNote(projectName, noteName, content) {
   }
 
   const filePath = path.join(dir, targetFile);
-  fs.writeFileSync(filePath, content.trim(), "utf-8");
-  return { success: true, file: targetFile, project: clean };
+  const currentVersion = Math.floor(fs.statSync(filePath).mtimeMs);
+  if (expectedVersion !== undefined && expectedVersion !== null && String(expectedVersion) !== String(currentVersion)) {
+    const latest = fs.readFileSync(filePath, "utf-8").trim();
+    throw new Error(
+      `Not okunduktan sonra değiştirilmiş (sürüm uyuşmazlığı), değişiklik yazılmadı. Güncel sürüm: ${currentVersion}. ` +
+      `Güncel içeriği incele, gerekirse birleştirip yeniden dene.\n--- güncel içerik ---\n${latest}`
+    );
+  }
+  atomicWriteFileSync(filePath, content.trim());
+  return { success: true, file: targetFile, project: clean, version: Math.floor(fs.statSync(filePath).mtimeMs) };
 }
 
-function moveToTrash(dir, fileName) {
+function _moveToTrash(dir, fileName) {
   const trashDir = path.join(dir, ".trash");
   fs.mkdirSync(trashDir, { recursive: true });
 
@@ -717,7 +794,7 @@ function moveToTrash(dir, fileName) {
   let meta = {};
   try { meta = JSON.parse(fs.readFileSync(metaFile, "utf-8")); } catch {}
   meta[path.basename(dest)] = { original: fileName, tags, pinned: wasPinned, deletedAt: Date.now(), deletedBy: "ai" };
-  fs.writeFileSync(metaFile, JSON.stringify(meta, null, 2), "utf-8");
+  atomicWriteFileSync(metaFile, JSON.stringify(meta, null, 2));
 
   // Drop tags/pin of the note unless other files (e.g. screenshots) still share its key
   const stillThere = fs.readdirSync(dir).some((f) => !f.startsWith(".") && noteKey(f) === key);
@@ -729,7 +806,7 @@ function moveToTrash(dir, fileName) {
     }
     applyTags(dir, fileName, []);
     if (wasPinned) {
-      fs.writeFileSync(path.join(dir, ".pinned.json"), JSON.stringify(readPinnedIds(dir).filter((i) => i !== key), null, 2), "utf-8");
+      atomicWriteFileSync(path.join(dir, ".pinned.json"), JSON.stringify(readPinnedIds(dir).filter((i) => i !== key), null, 2));
     }
   }
 }
@@ -766,7 +843,7 @@ function deleteProjectNote(projectName, noteName) {
   return { success: true, file: targetFile, project: clean, trashed: true };
 }
 
-function addProjectTodo(projectName, text) {
+function _addProjectTodo(projectName, text) {
   const clean = sanitizeName(projectName);
   if (!isProjectAllowed(clean)) {
     throw new Error(`"${clean}" projesine yazma izni bulunmuyor.`);
@@ -785,11 +862,11 @@ function addProjectTodo(projectName, text) {
   }
 
   const newLine = `- [ ] ${text.trim()} <!--ai-->\n`;
-  fs.writeFileSync(todoFile, newLine + existing, "utf-8");
+  atomicWriteFileSync(todoFile, newLine + existing);
   return { success: true, text: text.trim(), project: clean };
 }
 
-function toggleProjectTodo(projectName, textOrIndex, done) {
+function _toggleProjectTodo(projectName, textOrIndex, done) {
   const clean = sanitizeName(projectName);
   if (!isProjectAllowed(clean)) {
     throw new Error(`"${clean}" projesine yazma izni bulunmuyor.`);
@@ -823,11 +900,11 @@ function toggleProjectTodo(projectName, textOrIndex, done) {
     throw new Error(`"${textOrIndex}" görev listesinde eşleşmedi.`);
   }
 
-  fs.writeFileSync(todoFile, newLines.join("\n"), "utf-8");
+  atomicWriteFileSync(todoFile, newLines.join("\n"));
   return { success: true, project: clean, done };
 }
 
-function deleteProjectTodo(projectName, text) {
+function _deleteProjectTodo(projectName, text) {
   const clean = sanitizeName(projectName);
   if (!isProjectAllowed(clean)) {
     throw new Error(`"${clean}" projesine yazma izni bulunmuyor.`);
@@ -865,7 +942,7 @@ function deleteProjectTodo(projectName, text) {
     throw new Error(`"${text}" görev listesinde bulunamadı.`);
   }
 
-  fs.writeFileSync(todoFile, newLines.join("\n"), "utf-8");
+  atomicWriteFileSync(todoFile, newLines.join("\n"));
   return { success: true, project: clean, text };
 }
 
@@ -877,6 +954,32 @@ rl.on("close", () => {
   clearMcpSession();
   process.exit(0);
 });
+
+// Locked wrappers: every read-modify-write below runs under the project lock.
+function applyTags(dir, fileName, tags) {
+  return withProjectLock(dir, () => _applyTags(dir, fileName, tags));
+}
+function linkParent(dir, childFile, parentFile) {
+  return withProjectLock(dir, () => _linkParent(dir, childFile, parentFile));
+}
+function setNotePinned(projectName, noteName, pinned) {
+  return withProjectLockByName(projectName, () => _setNotePinned(projectName, noteName, pinned));
+}
+function moveToTrash(dir, fileName) {
+  return withProjectLock(dir, () => _moveToTrash(dir, fileName));
+}
+function editProjectNote(projectName, noteName, content, expectedVersion) {
+  return withProjectLockByName(projectName, () => _editProjectNote(projectName, noteName, content, expectedVersion));
+}
+function addProjectTodo(projectName, text) {
+  return withProjectLockByName(projectName, () => _addProjectTodo(projectName, text));
+}
+function toggleProjectTodo(projectName, textOrIndex, done) {
+  return withProjectLockByName(projectName, () => _toggleProjectTodo(projectName, textOrIndex, done));
+}
+function deleteProjectTodo(projectName, text) {
+  return withProjectLockByName(projectName, () => _deleteProjectTodo(projectName, text));
+}
 
 const TOOLS = [
   {
@@ -1021,6 +1124,7 @@ const TOOLS = [
         project: { type: "string", description: "Proje adı" },
         noteName: { type: "string", description: "Düzenlenecek notun dosya adı veya başlığı" },
         content: { type: "string", description: "Yeni not içeriği (Markdown)" },
+        expected_version: { type: "string", description: "Önerilir: notes_read_note'tan aldığın 'sürüm' değeri. Not bu arada değiştiyse düzenleme yazılmaz ve güncel içerik döner (başkasının değişikliğini ezmemek için)." },
       },
       required: ["project", "noteName", "content"],
     },
@@ -1117,7 +1221,7 @@ function logMcpActivity(toolName, project, details) {
     };
     logs.unshift(entry);
     if (logs.length > 60) logs = logs.slice(0, 60);
-    fs.writeFileSync(logFile, JSON.stringify(logs, null, 2), "utf-8");
+    atomicWriteFileSync(logFile, JSON.stringify(logs, null, 2));
     recordMcpActivity(toolName, project);
   } catch (err) {
     // silent
@@ -1190,9 +1294,9 @@ function logMcpActivity(toolName, project, details) {
         logMcpActivity("notes_set_tags", args.project, `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]`);
         respond({ content: [{ type: "text", text: `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]` }] });
       } else if (name === "notes_edit_note") {
-        const res = editProjectNote(args.project, args.noteName, args.content);
+        const res = editProjectNote(args.project, args.noteName, args.content, args.expected_version);
         logMcpActivity("notes_edit_note", args.project, `Not güncellendi: ${res.file}`);
-        respond({ content: [{ type: "text", text: `Not başarıyla güncellendi: ${res.file}` }] });
+        respond({ content: [{ type: "text", text: `Not başarıyla güncellendi: ${res.file} (yeni sürüm: ${res.version})` }] });
       } else if (name === "notes_delete_note") {
         const res = deleteProjectNote(args.project, args.noteName);
         logMcpActivity("notes_delete_note", args.project, `Not çöp kutusuna taşındı: ${res.file}`);

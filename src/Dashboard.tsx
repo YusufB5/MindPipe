@@ -29,6 +29,7 @@ import {
   setMcpPermissionSetting,
   setProjectPermissionOverride,
   setEntryParent,
+  noteModified,
   clearProjectPermissionOverride,
   listTrash,
   restoreTrashItem,
@@ -137,6 +138,10 @@ export default function Dashboard() {
   const [entries, setEntries] = useState<EntryMeta[]>([]);
   const [newProjectName, setNewProjectName] = useState("");
   const [loading, setLoading] = useState(true);
+
+  // Version (file mtime) of the note currently being edited, for external-change detection
+  const inlineBaseVersionRef = useRef<number | null>(null);
+  const [editorBaseVersion, setEditorBaseVersion] = useState<number | null>(null);
 
   // Note hierarchy state
   const [pointerNestIndex, setPointerNestIndex] = useState<number | null>(null);
@@ -930,8 +935,9 @@ export default function Dashboard() {
     if (entry.kind === "note" || entry.kind === "mixed") {
       setEditorLoading(true);
       try {
-        const text = await readNote(entry.path);
+        const [text, version] = await Promise.all([readNote(entry.path), noteModified(entry.path)]);
         setEditorContent(text);
+        setEditorBaseVersion(version);
       } catch (err) {
         setEditorContent(`Hata: Not okunamadı (${String(err)})`);
       } finally {
@@ -944,7 +950,17 @@ export default function Dashboard() {
     if (!editingEntry) return;
     try {
       setEditorStatus("Kaydediliyor...");
-      await updateNote(editingEntry.path, editorContent);
+      try {
+        await updateNote(editingEntry.path, editorContent, editorBaseVersion);
+      } catch (err) {
+        if (!String(err).includes("CONFLICT")) throw err;
+        if (!window.confirm(t("noteChangedExternally"))) {
+          setEditorStatus("");
+          return;
+        }
+        await updateNote(editingEntry.path, editorContent, null);
+      }
+      setEditorBaseVersion(await noteModified(editingEntry.path));
       setEditorStatus("Kaydedildi ✓");
       await refreshEntries(active);
       setTimeout(() => setEditorStatus(""), 2000);
@@ -991,12 +1007,33 @@ export default function Dashboard() {
     setInlineEditingPath(entry.path);
     setInlineDraftText(noteContents[entry.path] ?? entry.preview ?? "");
     setInlineStatus("");
+    inlineBaseVersionRef.current = null;
+    // Load the freshest content + its version so a later save can detect outside changes.
+    Promise.all([readNote(entry.path), noteModified(entry.path)])
+      .then(([text, version]) => {
+        inlineBaseVersionRef.current = version;
+        setInlineDraftText((current) => {
+          const shown = noteContents[entry.path] ?? entry.preview ?? "";
+          // Only replace the draft if the user has not typed anything yet.
+          return current === shown ? text : current;
+        });
+      })
+      .catch(() => {});
   }
 
   async function handleSaveInlineNote(entry: EntryMeta) {
     try {
       setInlineStatus("Kaydediliyor...");
-      await updateNote(entry.path, inlineDraftText);
+      try {
+        await updateNote(entry.path, inlineDraftText, inlineBaseVersionRef.current);
+      } catch (err) {
+        if (!String(err).includes("CONFLICT")) throw err;
+        if (!window.confirm(t("noteChangedExternally"))) {
+          setInlineStatus("");
+          return;
+        }
+        await updateNote(entry.path, inlineDraftText, null);
+      }
       setNoteContents((prev) => ({ ...prev, [entry.path]: inlineDraftText }));
       setExpandedNotes((prev) => ({ ...prev, [entry.path]: true }));
       setInlineStatus("Kaydedildi ✓");

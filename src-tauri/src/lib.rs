@@ -183,6 +183,105 @@ fn timestamped_filename(ext: &str) -> String {
     format!("{}.{}", chrono::Local::now().format("%Y-%m-%d_%H%M%S"), ext)
 }
 
+/// Writes `data` to a temp file next to `path` and renames it over the target, so readers
+/// (and the MCP server) only ever see the complete old or complete new file.
+fn atomic_write(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+    use std::io::Write as _;
+    let dir = path.parent().ok_or("Geçersiz dosya yolu")?;
+    let name = path.file_name().and_then(|n| n.to_str()).ok_or("Geçersiz dosya adı")?;
+    let tmp = dir.join(format!(".{}.{}.tmp", name, std::process::id()));
+    {
+        let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        f.write_all(data).map_err(|e| e.to_string())?;
+        f.sync_all().map_err(|e| e.to_string())?;
+    }
+    let mut last_err = String::new();
+    for _ in 0..8 {
+        match fs::rename(&tmp, path) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                last_err = e.to_string();
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+    }
+    let _ = fs::remove_file(&tmp);
+    Err(last_err)
+}
+
+/// Cross-process lock for read-modify-write of a project's metadata files.
+/// The MCP server uses the same `.lock` file protocol (create-new, stale after 5s).
+struct DirLock(Option<PathBuf>);
+
+impl Drop for DirLock {
+    fn drop(&mut self) {
+        if let Some(p) = &self.0 {
+            let _ = fs::remove_file(p);
+        }
+    }
+}
+
+fn lock_dir(dir: &std::path::Path) -> Result<DirLock, String> {
+    let lock_path = dir.join(".lock");
+    let start = std::time::Instant::now();
+    loop {
+        match fs::OpenOptions::new().write(true).create_new(true).open(&lock_path) {
+            Ok(_) => return Ok(DirLock(Some(lock_path))),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let stale = fs::metadata(&lock_path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .map_or(false, |d| d.as_secs() >= 5);
+                if stale {
+                    let _ = fs::remove_file(&lock_path);
+                    continue;
+                }
+                if start.elapsed() > std::time::Duration::from_secs(4) {
+                    return Err("Proje şu anda başka bir işlem tarafından kullanılıyor, tekrar deneyin.".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            // Folder does not exist (yet): nothing to protect.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(DirLock(None)),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+/// Re-reads tag/tree metadata under the project lock and drops records of notes that
+/// no longer exist, unused tag definitions and invalid hierarchy links.
+fn prune_metadata(dir: &PathBuf, live: &std::collections::HashSet<String>) {
+    let _lock = match lock_dir(dir) {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    let mut tags = get_tag_store(dir);
+    let before = (tags.entries.len(), tags.definitions.len());
+    tags.entries.retain(|id, _| live.contains(id));
+    cleanup_unused_tags(&mut tags);
+    if (tags.entries.len(), tags.definitions.len()) != before {
+        let _ = save_tag_store(dir, &tags);
+    }
+    let mut tree = get_tree_store(dir);
+    let snapshot = tree.parents.clone();
+    let tree_before = tree.parents.len();
+    tree.parents
+        .retain(|c, p| live.contains(c) && live.contains(p) && !snapshot.contains_key(p));
+    if tree.parents.len() != tree_before {
+        let _ = save_tree_store(dir, &tree);
+    }
+}
+
+fn file_modified_ms(path: &std::path::Path) -> u64 {
+    fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn extract_base_key(file_stem: &str) -> String {
     // If the file stem starts with standard YYYY-MM-DD_HHMMSS (17 chars: "2026-08-23_203728")
     if file_stem.len() >= 17 {
@@ -220,7 +319,7 @@ fn get_pinned_ids(project_dir: &PathBuf) -> Vec<String> {
 fn save_pinned_ids(project_dir: &PathBuf, ids: &[String]) -> Result<(), String> {
     let pin_file = project_dir.join(".pinned.json");
     let json = serde_json::to_string_pretty(ids).map_err(|e| e.to_string())?;
-    fs::write(pin_file, json).map_err(|e| e.to_string())?;
+    atomic_write(&pin_file, json.as_bytes())?;
     Ok(())
 }
 
@@ -228,6 +327,7 @@ fn save_pinned_ids(project_dir: &PathBuf, ids: &[String]) -> Result<(), String> 
 fn toggle_pin_entry(app: AppHandle, project: String, entry_id: String) -> Result<bool, String> {
     let clean = sanitize_name(&project)?;
     let dir = projects_root(&app)?.join(clean);
+    let _lock = lock_dir(&dir)?;
     let mut ids = get_pinned_ids(&dir);
     let is_pinned = if let Some(pos) = ids.iter().position(|id| id == &entry_id) {
         ids.remove(pos);
@@ -284,7 +384,7 @@ fn read_trash_meta(trash: &PathBuf) -> HashMap<String, TrashMeta> {
 
 fn write_trash_meta(trash: &PathBuf, meta: &HashMap<String, TrashMeta>) -> Result<(), String> {
     let json = serde_json::to_string_pretty(meta).map_err(|e| e.to_string())?;
-    fs::write(trash.join(".meta.json"), json).map_err(|e| e.to_string())
+    atomic_write(&trash.join(".meta.json"), json.as_bytes())
 }
 
 /// Rejects anything that is not a plain file name inside `.trash`.
@@ -344,6 +444,7 @@ fn list_trash(app: AppHandle, project: String) -> Result<Vec<TrashItem>, String>
 fn restore_trash_item(app: AppHandle, project: String, file: String) -> Result<(), String> {
     safe_trash_file(&file)?;
     let (dir, trash) = trash_dir(&app, &project)?;
+    let _lock = lock_dir(&dir)?;
     let src = trash.join(&file);
     if !src.is_file() {
         return Err("Çöp kutusunda bulunamadı".into());
@@ -386,7 +487,8 @@ fn restore_trash_item(app: AppHandle, project: String, file: String) -> Result<(
 #[tauri::command]
 fn purge_trash_item(app: AppHandle, project: String, file: String) -> Result<(), String> {
     safe_trash_file(&file)?;
-    let (_, trash) = trash_dir(&app, &project)?;
+    let (dir, trash) = trash_dir(&app, &project)?;
+    let _lock = lock_dir(&dir)?;
     let target = trash.join(&file);
     if target.is_file() {
         fs::remove_file(&target).map_err(|e| e.to_string())?;
@@ -415,7 +517,7 @@ fn get_tree_store(project_dir: &PathBuf) -> TreeStore {
 
 fn save_tree_store(project_dir: &PathBuf, store: &TreeStore) -> Result<(), String> {
     let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
-    fs::write(project_dir.join(".tree.json"), json).map_err(|e| e.to_string())
+    atomic_write(&project_dir.join(".tree.json"), json.as_bytes())
 }
 
 /// Sets (or clears, when `parent_id` is None) the parent of a note.
@@ -430,6 +532,7 @@ fn set_entry_parent(
 ) -> Result<(), String> {
     let clean = sanitize_name(&project)?;
     let dir = projects_root(&app)?.join(clean);
+    let _lock = lock_dir(&dir)?;
     let mut store = get_tree_store(&dir);
     match parent_id {
         None => {
@@ -472,7 +575,7 @@ fn get_tag_store(project_dir: &PathBuf) -> TagStore {
 
 fn save_tag_store(project_dir: &PathBuf, store: &TagStore) -> Result<(), String> {
     let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
-    fs::write(project_dir.join(".tags.json"), json).map_err(|e| e.to_string())
+    atomic_write(&project_dir.join(".tags.json"), json.as_bytes())
 }
 
 fn cleanup_unused_tags(store: &mut TagStore) -> bool {
@@ -491,9 +594,7 @@ fn get_project_tags(
     let clean = sanitize_name(&project)?;
     let dir = projects_root(&app)?.join(clean);
     let mut store = get_tag_store(&dir);
-    if cleanup_unused_tags(&mut store) {
-        let _ = save_tag_store(&dir, &store);
-    }
+    cleanup_unused_tags(&mut store);
     Ok(store.definitions)
 }
 
@@ -509,6 +610,7 @@ fn set_entry_tags(
 ) -> Result<(), String> {
     let clean = sanitize_name(&project)?;
     let dir = projects_root(&app)?.join(clean);
+    let _lock = lock_dir(&dir)?;
     let mut store = get_tag_store(&dir);
     for (name, color) in definitions {
         store.definitions.entry(name).or_insert(color);
@@ -529,6 +631,7 @@ fn set_entry_tags(
 fn delete_project_tag(app: AppHandle, project: String, name: String) -> Result<(), String> {
     let clean = sanitize_name(&project)?;
     let dir = projects_root(&app)?.join(clean);
+    let _lock = lock_dir(&dir)?;
     let mut store = get_tag_store(&dir);
     store.definitions.remove(&name);
     for tags in store.entries.values_mut() {
@@ -582,7 +685,7 @@ fn write_todos_to_file(file_path: &PathBuf, items: &[TodoItem]) -> Result<(), St
         lines.push(format!("{} {}{}", prefix, item.text.trim(), suffix));
     }
     let content = lines.join("\n");
-    fs::write(file_path, content).map_err(|e| e.to_string())?;
+    atomic_write(file_path, content.as_bytes())?;
     Ok(())
 }
 
@@ -599,6 +702,7 @@ fn add_todo(app: AppHandle, project: String, text: String) -> Result<(), String>
     let dir = projects_root(&app)?.join(clean);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = dir.join("todos.md");
+    let _lock = lock_dir(&dir)?;
     let mut items = parse_todos_from_file(&file);
     items.insert(
         0,
@@ -618,6 +722,7 @@ fn add_todo(app: AppHandle, project: String, text: String) -> Result<(), String>
 fn toggle_todo(app: AppHandle, project: String, id: String, done: bool) -> Result<(), String> {
     let clean = sanitize_name(&project)?;
     let file = projects_root(&app)?.join(clean).join("todos.md");
+    let _lock = lock_dir(file.parent().unwrap_or(std::path::Path::new(".")))?;
     let mut items = parse_todos_from_file(&file);
     for item in &mut items {
         if item.id == id {
@@ -634,6 +739,7 @@ fn toggle_todo(app: AppHandle, project: String, id: String, done: bool) -> Resul
 fn delete_todo(app: AppHandle, project: String, id: String) -> Result<(), String> {
     let clean = sanitize_name(&project)?;
     let file = projects_root(&app)?.join(clean).join("todos.md");
+    let _lock = lock_dir(file.parent().unwrap_or(std::path::Path::new(".")))?;
     let mut items = parse_todos_from_file(&file);
     items.retain(|item| item.id != id);
     write_todos_to_file(&file, &items)?;
@@ -706,7 +812,7 @@ fn get_order_ids(project_dir: &PathBuf) -> Vec<String> {
 fn save_order_ids(project_dir: &PathBuf, ids: &[String]) -> Result<(), String> {
     let order_file = project_dir.join(".order.json");
     let json = serde_json::to_string_pretty(ids).map_err(|e| e.to_string())?;
-    fs::write(order_file, json).map_err(|e| e.to_string())?;
+    atomic_write(&order_file, json.as_bytes())?;
     Ok(())
 }
 
@@ -714,6 +820,7 @@ fn save_order_ids(project_dir: &PathBuf, ids: &[String]) -> Result<(), String> {
 fn reorder_entries(app: AppHandle, project: String, ordered_ids: Vec<String>) -> Result<(), String> {
     let clean = sanitize_name(&project)?;
     let dir = projects_root(&app)?.join(clean);
+    let _lock = lock_dir(&dir)?;
     save_order_ids(&dir, &ordered_ids)?;
     let _ = app.emit("notes-updated", ());
     Ok(())
@@ -802,9 +909,7 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
     let pinned_ids = get_pinned_ids(&dir);
     let order_ids = get_order_ids(&dir);
     let mut tag_store = get_tag_store(&dir);
-    if cleanup_unused_tags(&mut tag_store) {
-        let _ = save_tag_store(&dir, &tag_store);
-    }
+    let mut needs_prune = cleanup_unused_tags(&mut tag_store);
 
     struct GroupItem {
         md_path: Option<PathBuf>,
@@ -944,7 +1049,7 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
                 && !parents_snapshot.contains_key(parent.as_str())
         });
         if tree_store.parents.len() != before {
-            let _ = save_tree_store(&dir, &tree_store);
+            needs_prune = true;
         }
     }
     for e in entries.iter_mut() {
@@ -957,7 +1062,11 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
     tag_store.entries.retain(|id, _| live_ids.contains(id.as_str()));
     if tag_store.entries.len() != before {
         cleanup_unused_tags(&mut tag_store);
-        let _ = save_tag_store(&dir, &tag_store);
+        needs_prune = true;
+    }
+    if needs_prune {
+        let live: std::collections::HashSet<String> = entries.iter().map(|e| e.id.clone()).collect();
+        prune_metadata(&dir, &live);
     }
 
     entries.sort_by(|a, b| {
@@ -998,7 +1107,7 @@ fn save_note(app: AppHandle, project: String, content: String) -> Result<String,
     let dir = projects_root(&app)?.join(clean);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(timestamped_filename("md"));
-    fs::write(&path, content).map_err(|e| e.to_string())?;
+    atomic_write(&path, content.as_bytes())?;
     let _ = app.emit("notes-updated", ());
     Ok(path.to_string_lossy().to_string())
 }
@@ -1052,7 +1161,7 @@ fn save_capture(
             format!("{}.md", now_ts)
         };
         let note_path = dir.join(note_filename);
-        fs::write(&note_path, content).map_err(|e| e.to_string())?;
+        atomic_write(&note_path, content.as_bytes())?;
     }
 
     let _ = app.emit("notes-updated", ());
@@ -1095,9 +1204,32 @@ fn read_note(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+/// Last-modified time (ms) of a note file; used as its version for conflict detection.
 #[tauri::command]
-fn update_note(app: AppHandle, path: String, content: String) -> Result<(), String> {
-    fs::write(&path, content).map_err(|e| e.to_string())?;
+fn note_modified(path: String) -> u64 {
+    file_modified_ms(std::path::Path::new(&path))
+}
+
+/// Overwrites a note. When `expected_modified` is given and the file changed since
+/// (e.g. an AI agent edited it), nothing is written and a `CONFLICT` error is returned.
+#[tauri::command]
+fn update_note(
+    app: AppHandle,
+    path: String,
+    content: String,
+    expected_modified: Option<u64>,
+) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    let _lock = match p.parent() {
+        Some(dir) => Some(lock_dir(dir)?),
+        None => None,
+    };
+    if let Some(expected) = expected_modified {
+        if file_modified_ms(p) != expected {
+            return Err("CONFLICT: not dışarıdan değiştirildi".into());
+        }
+    }
+    atomic_write(p, content.as_bytes())?;
     let _ = app.emit("notes-updated", ());
     Ok(())
 }
@@ -1118,6 +1250,7 @@ fn delete_entry(app: AppHandle, path: String, image_paths: Option<Vec<String>>) 
     }
     if let Some(parent) = p.parent() {
         let parent_buf = parent.to_path_buf();
+        let _lock = lock_dir(&parent_buf)?;
         let mut store = get_tag_store(&parent_buf);
         let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         let entry_key = extract_base_key(stem);
@@ -1443,7 +1576,7 @@ fn toggle_project_mcp_access(app: AppHandle, project: String) -> Result<bool, St
     };
 
     let json = serde_json::to_string_pretty(&permissions).map_err(|e| e.to_string())?;
-    fs::write(&perm_path, json).map_err(|e| e.to_string())?;
+    atomic_write(&perm_path, json.as_bytes())?;
 
     let _ = app.emit("notes-updated", ());
     Ok(is_now_allowed)
@@ -1464,7 +1597,7 @@ fn set_mcp_permission_setting(app: AppHandle, key: String, value: String) -> Res
     }
 
     let json = serde_json::to_string_pretty(&permissions).map_err(|e| e.to_string())?;
-    fs::write(&perm_path, json).map_err(|e| e.to_string())?;
+    atomic_write(&perm_path, json.as_bytes())?;
 
     let _ = app.emit("notes-updated", ());
     Ok(())
@@ -1499,7 +1632,7 @@ fn set_project_permission_override(
     }
 
     let json = serde_json::to_string_pretty(&permissions).map_err(|e| e.to_string())?;
-    fs::write(&perm_path, json).map_err(|e| e.to_string())?;
+    atomic_write(&perm_path, json.as_bytes())?;
     let _ = app.emit("notes-updated", ());
     Ok(())
 }
@@ -1513,7 +1646,7 @@ fn clear_project_permission_override(app: AppHandle, project: String) -> Result<
     let mut permissions = load_permissions(&perm_path);
     permissions.project_overrides.remove(&project.trim().to_lowercase());
     let json = serde_json::to_string_pretty(&permissions).map_err(|e| e.to_string())?;
-    fs::write(&perm_path, json).map_err(|e| e.to_string())?;
+    atomic_write(&perm_path, json.as_bytes())?;
     let _ = app.emit("notes-updated", ());
     Ok(())
 }
@@ -1748,6 +1881,7 @@ pub fn run() {
             set_mcp_permission_setting,
             set_project_permission_override,
             set_entry_parent,
+            note_modified,
             list_trash,
             restore_trash_item,
             purge_trash_item,
