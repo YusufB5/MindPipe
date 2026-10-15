@@ -1920,8 +1920,27 @@ export default function Dashboard() {
                                   {formatTimestamp(entry.modified)}
                                 </time>
 
-                                {/* Untagged notes keep a single-line header: icon-only add-tag button */}
-                                {(entry.tags || []).length === 0 && tagAddButton}
+                                {/* Tags stay on the first row next to the date */}
+                                {(entry.tags || []).map((tagName) => {
+                                  const color = projectTags[tagName] || "#f59e0b";
+                                  return (
+                                    <span
+                                      key={tagName}
+                                      className="devlog-tag-badge devlog-tag-badge--removable"
+                                      style={{ "--tag-color": color } as React.CSSProperties}
+                                      title={lang === "tr" ? `"${tagName}" etiketini bu nottan kaldırmak için tıklayın` : `Click to remove "${tagName}" tag`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleToggleTagOnEntry(entry, tagName);
+                                      }}
+                                    >
+                                      <span className="devlog-tag-badge__dot" />
+                                      <span>{tagName}</span>
+                                      <span className="devlog-tag-badge__close" aria-hidden="true">✕</span>
+                                    </span>
+                                  );
+                                })}
+                                {tagAddButton}
                               </div>
 
                           {/* Quick Actions Toolbar */}
@@ -1962,25 +1981,38 @@ export default function Dashboard() {
 
                             <button
                               type="button"
-                              className="devlog-action-btn"
-                              title={lang === "tr" ? "Metni Kopyala" : "Copy Text"}
+                              className="devlog-action-btn devlog-action-btn--icon"
+                              title={copiedPath === entry.path ? t("copied") : (lang === "tr" ? "Metni Kopyala" : "Copy Text")}
+                              aria-label={lang === "tr" ? "Metni Kopyala" : "Copy Text"}
                               onClick={(e) => handleCopyEntryText(entry, e)}
                             >
-                              {copiedPath === entry.path ? t("copied") : t("copy")}
+                              {copiedPath === entry.path ? (
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                              ) : (
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                </svg>
+                              )}
                             </button>
 
                             <button
                               type="button"
-                              className={`devlog-action-btn ${entry.pinned ? "devlog-action-btn--pinned" : ""}`}
+                              className={`devlog-action-btn devlog-action-btn--icon ${entry.pinned ? "devlog-action-btn--pinned" : ""}`}
                               title={entry.pinned ? (lang === "tr" ? "Sabitlemeyi Kaldır" : "Unpin") : (lang === "tr" ? "Başa Sabitle" : "Pin to Top")}
+                              aria-label={entry.pinned ? t("unpin") : t("pin")}
                               onClick={(e) => handleTogglePin(entry, e)}
                             >
-                              {entry.pinned ? t("unpin") : t("pin")}
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill={entry.pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M16 3H8v2h1v5l-2 3v2h5v6l1 1 1-1v-6h5v-2l-2-3V5h1V3z" />
+                              </svg>
                             </button>
 
                             <button
                               type="button"
-                              className="devlog-action-btn"
+                              className="devlog-action-btn devlog-action-btn--icon"
                               title={isInlineEditing ? (lang === "tr" ? "Düzenlemeyi Kapat" : "Close Editor") : (lang === "tr" ? "Düzenle" : "Edit")}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1991,45 +2023,34 @@ export default function Dashboard() {
                                 }
                               }}
                             >
-                              {isInlineEditing ? t("closeEdit") : t("edit")}
+                              {isInlineEditing ? (
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <line x1="18" y1="6" x2="6" y2="18" />
+                                  <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                              ) : (
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M12 20h9" />
+                                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                </svg>
+                              )}
                             </button>
 
                             <button
                               type="button"
-                              className="devlog-action-btn devlog-action-btn--delete"
+                              className="devlog-action-btn devlog-action-btn--icon devlog-action-btn--delete"
                               title={t("delete")}
+                              aria-label={t("delete")}
                               onClick={(e) => handleDeleteEntry(entry, e)}
                             >
-                              🗑️
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                <path d="M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                              </svg>
                             </button>
                           </div>
                         </header>
-
-                        {/* Tags live on their own row so the header never wraps awkwardly */}
-                        {(entry.tags || []).length > 0 && (
-                          <div className="devlog-item__tags-row">
-                            {(entry.tags || []).map((tagName) => {
-                              const color = projectTags[tagName] || "#f59e0b";
-                              return (
-                                <span
-                                  key={tagName}
-                                  className="devlog-tag-badge devlog-tag-badge--removable"
-                                  style={{ "--tag-color": color } as React.CSSProperties}
-                                  title={lang === "tr" ? `"${tagName}" etiketini bu nottan kaldırmak için tıklayın` : `Click to remove "${tagName}" tag`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleToggleTagOnEntry(entry, tagName);
-                                  }}
-                                >
-                                  <span className="devlog-tag-badge__dot" />
-                                  <span>{tagName}</span>
-                                  <span className="devlog-tag-badge__close" aria-hidden="true">✕</span>
-                                </span>
-                              );
-                            })}
-                            {tagAddButton}
-                          </div>
-                        )}
 
                         {/* DevLog Item Body */}
                         <div className="devlog-item__body">

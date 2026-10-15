@@ -3938,10 +3938,6 @@ body.is-reordering-cards * {
   cursor: default;
 }
 
-.devlog-item--child .devlog-item__divider {
-  display: none;
-}
-
 .devlog-item--nest-target {
   outline: 2px dashed var(--spine);
   outline-offset: 3px;
@@ -4055,4 +4051,15 @@ body.is-reordering-cards * {
 
 .devlog-children-toggle:focus-visible {
   border-color: var(--spine);
+}
+
+/* Icon-only quick actions + inline tags in the header */
+.devlog-action-btn--icon {
+  padding: 4px 6px;
+  line-height: 0;
+}
+
+.devlog-item__meta .devlog-tag-badge {
+  font-size: 10.5px;
+  padding: 1px 7px;
 }
