@@ -277,7 +277,101 @@ function tagSuffix(tags) {
   return tags && tags.length > 0 ? `  [etiketler: ${tags.join(", ")}]` : "";
 }
 
-function getProjectContext(projectName, tagFilter) {
+function noteTitle(content) {
+  const first = (content || "").split("\n").find((l) => l.trim()) || "";
+  return first.replace(/^#+\s*/, "").trim().slice(0, 80) || "(boş not)";
+}
+
+function noteSummary(content, max = 140) {
+  const lines = (content || "").split("\n").filter((l) => l.trim());
+  return lines.slice(1).join(" ").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function accessibleDir(projectName) {
+  const clean = sanitizeName(projectName);
+  if (!isProjectAllowed(clean)) {
+    throw new Error(`"${clean}" projesine erişim izni bulunmuyor.`);
+  }
+  const dir = path.join(getProjectsRoot(), clean);
+  if (!fs.existsSync(dir)) {
+    throw new Error(`"${clean}" projesi bulunamadı.`);
+  }
+  return { clean, dir };
+}
+
+function findNoteFile(dir, noteName) {
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "todos.md" && !f.startsWith("."));
+  const match =
+    files.find((f) => f === noteName) ||
+    files.find((f) => f === `${noteName}.md`) ||
+    files.find((f) => f.startsWith(noteName));
+  if (!match) throw new Error(`"${noteName}" adlı not bulunamadı.`);
+  return match;
+}
+
+function readPinnedIds(dir) {
+  try {
+    const ids = JSON.parse(fs.readFileSync(path.join(dir, ".pinned.json"), "utf-8"));
+    return Array.isArray(ids) ? ids : [];
+  } catch {
+    return [];
+  }
+}
+
+// Lightweight index: title + short summary + tags, no full content.
+function listNotes(projectName, tagFilter, limit) {
+  const { clean, dir } = accessibleDir(projectName);
+  const tagStore = readTagStore(dir);
+  const pinnedIds = readPinnedIds(dir);
+  const wantedTag = tagFilter ? String(tagFilter).trim().toLowerCase() : "";
+
+  let items = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".md") && f !== "todos.md" && !f.startsWith("."))
+    .map((f) => {
+      const full = path.join(dir, f);
+      const content = fs.readFileSync(full, "utf-8");
+      return {
+        file: f,
+        title: noteTitle(content),
+        summary: noteSummary(content),
+        tags: tagStore.entries[noteKey(f)] || [],
+        pinned: pinnedIds.includes(noteKey(f)),
+        modified: new Date(fs.statSync(full).mtimeMs).toISOString(),
+        chars: content.length,
+      };
+    })
+    .filter((n) => !wantedTag || n.tags.some((t) => t.toLowerCase() === wantedTag));
+
+  items.sort((a, b) => (b.pinned - a.pinned) || b.modified.localeCompare(a.modified));
+  const total = items.length;
+  if (Number(limit) > 0) items = items.slice(0, Number(limit));
+  return { project: clean, total, returned: items.length, notes: items };
+}
+
+function readNote(projectName, noteName) {
+  const { clean, dir } = accessibleDir(projectName);
+  const file = findNoteFile(dir, noteName);
+  const tags = readTagStore(dir).entries[noteKey(file)] || [];
+  const pinned = readPinnedIds(dir).includes(noteKey(file));
+  const content = fs.readFileSync(path.join(dir, file), "utf-8").trim();
+  return `# ${file}\nProje: ${clean}${pinned ? " | 📌 sabitli" : ""}${tags.length ? ` | etiketler: ${tags.join(", ")}` : ""}\n\n${content}\n`;
+}
+
+function setNotePinned(projectName, noteName, pinned) {
+  const { clean, dir } = accessibleDir(projectName);
+  const file = findNoteFile(dir, noteName);
+  const key = noteKey(file);
+  let ids = readPinnedIds(dir);
+  const isPinned = ids.includes(key);
+  const want = pinned === undefined ? !isPinned : Boolean(pinned);
+  if (want && !isPinned) ids.push(key);
+  if (!want && isPinned) ids = ids.filter((i) => i !== key);
+  fs.writeFileSync(path.join(dir, ".pinned.json"), JSON.stringify(ids, null, 2), "utf-8");
+  return { success: true, file, project: clean, pinned: want };
+}
+
+function getProjectContext(projectName, tagFilter, maxTokens) {
   const clean = sanitizeName(projectName);
   if (!isProjectAllowed(clean)) {
     throw new Error(`"${clean}" projesine erişim izni bulunmuyor (İzole proje politikası).`);
@@ -312,7 +406,8 @@ function getProjectContext(projectName, tagFilter) {
       if (wantedTag && !tags.some((t) => t.toLowerCase() === wantedTag)) continue;
       const content = fs.readFileSync(fullPath, "utf-8");
       const isPinned = pinnedIds.some((p) => f.startsWith(p));
-      notes.push({ file: f, content: content.trim(), isPinned, tags });
+      const mtime = fs.statSync(fullPath).mtimeMs;
+      notes.push({ file: f, content: content.trim(), isPinned, tags, mtime });
     } else if (f.endsWith(".png") && !wantedTag) {
       images.push(f);
     }
@@ -344,21 +439,44 @@ function getProjectContext(projectName, tagFilter) {
     output += `\n---\n\n`;
   }
 
-  const pinnedNotes = notes.filter((n) => n.isPinned);
+  // Optional token budget (~4 chars/token). Pinned notes go first, then newest notes;
+  // whatever does not fit is listed as title + summary only.
+  const budget = Number(maxTokens) > 0 ? Number(maxTokens) * 4 : Infinity;
+  const omitted = [];
+  const fits = (n, section) => {
+    const cost = n.file.length + n.content.length + 20;
+    if (output.length + section.length + cost > budget) return false;
+    return true;
+  };
+
+  const pinnedNotes = notes.filter((n) => n.isPinned).sort((a, b) => b.mtime - a.mtime);
   if (pinnedNotes.length > 0) {
-    output += `## 📌 Sabitlenmiş Önemli Notlar & Kurallar\n\n`;
+    let section = `## 📌 Sabitlenmiş Önemli Notlar & Kurallar\n\n`;
     pinnedNotes.forEach((n) => {
-      output += `### ${n.file}${tagSuffix(n.tags)}\n${n.content}\n\n`;
+      if (fits(n, section)) section += `### ${n.file}${tagSuffix(n.tags)}\n${n.content}\n\n`;
+      else omitted.push(n);
     });
-    output += `---\n\n`;
+    output += section + `---\n\n`;
   }
 
   const regularNotes = notes.filter((n) => !n.isPinned);
+  if (isFinite(budget)) regularNotes.sort((a, b) => b.mtime - a.mtime);
   if (regularNotes.length > 0) {
-    output += `## 📝 Notlar ve Kayıtlar\n\n`;
+    let section = `## 📝 Notlar ve Kayıtlar\n\n`;
     regularNotes.forEach((n) => {
-      output += `### ${n.file}${tagSuffix(n.tags)}\n${n.content}\n\n`;
+      if (fits(n, section)) section += `### ${n.file}${tagSuffix(n.tags)}\n${n.content}\n\n`;
+      else omitted.push(n);
     });
+    output += section;
+  }
+
+  if (omitted.length > 0) {
+    output += `\n## ✂️ Token bütçesine sığmayan notlar (${omitted.length})\n`;
+    output += `Tam içerik için notes_read_note kullan.\n`;
+    omitted.forEach((n) => {
+      output += `- ${n.file}${tagSuffix(n.tags)} — ${noteTitle(n.content)}: ${noteSummary(n.content)}\n`;
+    });
+    output += `\n`;
   }
 
   if (images.length > 0) {
@@ -656,8 +774,47 @@ const TOOLS = [
       properties: {
         project: { type: "string", description: "Proje adı (örneğin: 'ASCILINE', 'inbox')" },
         tag: { type: "string", description: "İsteğe bağlı: yalnızca bu etiketi taşıyan notları getir" },
+        max_tokens: { type: "number", description: "İsteğe bağlı yaklaşık token bütçesi. Sabitli ve en yeni notlar önce gelir; sığmayanlar yalnızca başlık+özet olarak listelenir." },
       },
       required: ["project"],
+    },
+  },
+  {
+    name: "notes_list_notes",
+    description: "Projedeki notların hafif dizinini döner: başlık, kısa özet, etiketler, sabitli mi, değişiklik zamanı. Tam içerik yok (token dostu). Sabitliler önce, sonra en yeni. 'tag' ve 'limit' ile daraltılabilir; 'limit' ile son değişen notları almak için kullan.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Proje adı" },
+        tag: { type: "string", description: "İsteğe bağlı etiket filtresi" },
+        limit: { type: "number", description: "İsteğe bağlı: en fazla kaç not dönsün" },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "notes_read_note",
+    description: "Tek bir notun tam içeriğini adına (veya başlangıcına) göre okur; etiket ve sabitli bilgisi başlıkta gelir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Proje adı" },
+        noteName: { type: "string", description: "Notun dosya adı veya başlangıcı (örn: '2026-10-09_233432')" },
+      },
+      required: ["project", "noteName"],
+    },
+  },
+  {
+    name: "notes_pin_note",
+    description: "Bir notu sabitler veya sabitlemeyi kaldırır. 'pinned' verilmezse mevcut durumu tersine çevirir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Proje adı" },
+        noteName: { type: "string", description: "Notun dosya adı veya başlangıcı" },
+        pinned: { type: "boolean", description: "true = sabitle, false = kaldır (opsiyonel)" },
+      },
+      required: ["project", "noteName"],
     },
   },
   {
@@ -855,9 +1012,21 @@ function logMcpActivity(toolName, project, details) {
         logMcpActivity("notes_list_projects", "Tüm Projeler", "Projeleri listeledi");
         respond({ content: [{ type: "text", text: JSON.stringify(list, null, 2) }] });
       } else if (name === "notes_get_project_context") {
-        const context = getProjectContext(args.project, args.tag);
+        const context = getProjectContext(args.project, args.tag, args.max_tokens);
         logMcpActivity("notes_get_project_context", args.project, args.tag ? `Notları okudu (etiket: ${args.tag})` : "Notları ve görevleri okudu");
         respond({ content: [{ type: "text", text: context }] });
+      } else if (name === "notes_list_notes") {
+        const res = listNotes(args.project, args.tag, args.limit);
+        logMcpActivity("notes_list_notes", args.project, `Not dizini okudu (${res.returned}/${res.total})`);
+        respond({ content: [{ type: "text", text: JSON.stringify(res, null, 2) }] });
+      } else if (name === "notes_read_note") {
+        const text = readNote(args.project, args.noteName);
+        logMcpActivity("notes_read_note", args.project, `Not okudu: ${args.noteName}`);
+        respond({ content: [{ type: "text", text }] });
+      } else if (name === "notes_pin_note") {
+        const res = setNotePinned(args.project, args.noteName, args.pinned);
+        logMcpActivity("notes_pin_note", args.project, `${res.pinned ? "Sabitlendi" : "Sabitleme kaldırıldı"}: ${res.file}`);
+        respond({ content: [{ type: "text", text: `${res.pinned ? "Sabitlendi" : "Sabitleme kaldırıldı"}: ${res.file}` }] });
       } else if (name === "notes_get_image") {
         const img = getImage(args.project, args.imageName);
         logMcpActivity("notes_get_image", args.project, `Ekran görüntüsü incelendi: ${args.imageName}`);
