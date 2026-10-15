@@ -28,6 +28,7 @@ import {
   toggleProjectMcpAccess,
   setMcpPermissionSetting,
   setProjectPermissionOverride,
+  setEntryParent,
   clearProjectPermissionOverride,
   listTrash,
   restoreTrashItem,
@@ -137,6 +138,12 @@ export default function Dashboard() {
   const [newProjectName, setNewProjectName] = useState("");
   const [loading, setLoading] = useState(true);
 
+  // Note hierarchy state
+  const [pointerNestIndex, setPointerNestIndex] = useState<number | null>(null);
+  const nestIndexRef = useRef<number | null>(null);
+  const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
+  const [newNoteParentId, setNewNoteParentId] = useState<string | null>(null);
+
   // AI permission overrides + trash state
   const [overridePending, setOverridePending] = useState<string[]>([]);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -165,6 +172,9 @@ export default function Dashboard() {
   const [pointerDropIndex, setPointerDropIndex] = useState<number | null>(null);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
+  const rootEntries = entries.filter((e) => !e.parentId);
+  const rootEntriesRef = useRef(rootEntries);
+  rootEntriesRef.current = rootEntries;
   const isDraggingCardRef = useRef(false);
 
   // Search state
@@ -718,6 +728,7 @@ export default function Dashboard() {
       }
 
       if (dragStarted) {
+        nestIndexRef.current = null;
         // 1. Check if cursor is back over the original dragged card's area (cancel/abort intent):
         const origCardEl = document.querySelector(`.devlog-item[data-index="${fromIndex}"], .entry[data-index="${fromIndex}"]`);
         if (origCardEl) {
@@ -729,6 +740,7 @@ export default function Dashboard() {
             moveEvt.clientY <= origRect.bottom
           ) {
             setPointerDropIndex(fromIndex);
+            setPointerNestIndex(null);
             return;
           }
         }
@@ -739,6 +751,7 @@ export default function Dashboard() {
           const listRect = listEl.getBoundingClientRect();
           if (moveEvt.clientX < listRect.left - 40 || moveEvt.clientX > listRect.right + 40) {
             setPointerDropIndex(fromIndex);
+            setPointerNestIndex(null);
             return;
           }
         }
@@ -750,8 +763,24 @@ export default function Dashboard() {
           const idxStr = cardEl.getAttribute("data-index");
           if (idxStr !== null) {
             const targetIdx = parseInt(idxStr, 10);
-            if (!isNaN(targetIdx) && targetIdx >= 0 && targetIdx < entriesRef.current.length) {
-              setPointerDropIndex(targetIdx);
+            if (!isNaN(targetIdx) && targetIdx >= 0 && targetIdx < rootEntriesRef.current.length) {
+              // Middle band of another top-level card nests the dragged note under it;
+              // the top/bottom bands keep the normal reorder behaviour.
+              const rect = cardEl.getBoundingClientRect();
+              const ratio = rect.height > 0 ? (moveEvt.clientY - rect.top) / rect.height : 0;
+              const srcEntry = rootEntriesRef.current[fromIndex];
+              const tgtEntry = rootEntriesRef.current[targetIdx];
+              const srcHasChildren = srcEntry
+                ? entriesRef.current.some((en) => en.parentId === srcEntry.id)
+                : true;
+              if (srcEntry && tgtEntry && targetIdx !== fromIndex && !srcHasChildren && ratio > 0.3 && ratio < 0.7) {
+                nestIndexRef.current = targetIdx;
+                setPointerNestIndex(targetIdx);
+                setPointerDropIndex(fromIndex);
+              } else {
+                setPointerNestIndex(null);
+                setPointerDropIndex(targetIdx);
+              }
             }
           }
         } else {
@@ -761,7 +790,7 @@ export default function Dashboard() {
             if (moveEvt.clientY < listRect.top + 30) {
               setPointerDropIndex(0);
             } else if (moveEvt.clientY > listRect.bottom - 30) {
-              setPointerDropIndex(entriesRef.current.length - 1);
+              setPointerDropIndex(rootEntriesRef.current.length - 1);
             }
           }
         }
@@ -778,6 +807,8 @@ export default function Dashboard() {
     const onKeyDown = (kEvt: KeyboardEvent) => {
       if (kEvt.key === "Escape") {
         cleanup();
+        nestIndexRef.current = null;
+        setPointerNestIndex(null);
         setPointerDragIndex(null);
         setPointerDropIndex(null);
         setTimeout(() => {
@@ -794,12 +825,26 @@ export default function Dashboard() {
           isDraggingCardRef.current = false;
         }, 80);
 
+        const nestTarget = nestIndexRef.current;
+        nestIndexRef.current = null;
+        setPointerNestIndex(null);
+
         setPointerDropIndex((targetIdx) => {
           setPointerDragIndex((srcIdx) => {
-            if (srcIdx !== null && targetIdx !== null && srcIdx !== targetIdx) {
-              const updated = [...entriesRef.current];
-              const [removed] = updated.splice(srcIdx, 1);
-              updated.splice(targetIdx, 0, removed);
+            const roots = rootEntriesRef.current;
+            if (srcIdx !== null && nestTarget !== null && roots[srcIdx] && roots[nestTarget]) {
+              setEntryParent(active, roots[srcIdx].id, roots[nestTarget].id)
+                .then(() => refreshEntries(active, true))
+                .catch((err) => alert(String(err)));
+            } else if (srcIdx !== null && targetIdx !== null && srcIdx !== targetIdx) {
+              const updatedRoots = [...roots];
+              const [removed] = updatedRoots.splice(srcIdx, 1);
+              updatedRoots.splice(targetIdx, 0, removed);
+              // Children stay attached to their parent in the persisted order.
+              const updated = updatedRoots.flatMap((r) => [
+                r,
+                ...entriesRef.current.filter((en) => en.parentId === r.id),
+              ]);
               setEntries(updated);
 
               reorderEntries(active, updated.map((item) => item.id)).catch((err) => {
@@ -998,6 +1043,8 @@ export default function Dashboard() {
     const trimmed = newNoteContent.trim();
     if (!hasImages && !trimmed) return;
     try {
+      const parentId = newNoteParentId;
+      const knownIds = new Set(entriesRef.current.map((en) => en.id));
       if (hasImages) {
         const strippedImages = newNoteImages.map((img) => stripDataUrlPrefix(img));
         await saveCapture(
@@ -1008,8 +1055,16 @@ export default function Dashboard() {
       } else {
         await saveNote(active, trimmed);
       }
+      if (parentId) {
+        const after = await listEntries(active);
+        const created = after.find((en) => !knownIds.has(en.id));
+        if (created) {
+          await setEntryParent(active, created.id, parentId).catch((err) => alert(String(err)));
+        }
+      }
       setNewNoteContent("");
       setNewNoteImages([]);
+      setNewNoteParentId(null);
       setIsCreatingNote(false);
       await refreshEntries(active);
     } catch (err) {
@@ -1563,6 +1618,22 @@ export default function Dashboard() {
 
               {isCreatingNote && (
                 <form className="dashboard__quick-note" onSubmit={handleCreateDirectNote}>
+                  {newNoteParentId && (
+                    <div className="dashboard__quick-note-parent">
+                      <span>
+                        ↳ {t("subNoteOf")}{" "}
+                        <strong>{entries.find((en) => en.id === newNoteParentId)?.name ?? newNoteParentId}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        className="dashboard__quick-note-parent-clear"
+                        title={t("subNoteCancel")}
+                        onClick={() => setNewNoteParentId(null)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
                   <textarea
                     placeholder={t("quickNotePlaceholder")}
                     value={newNoteContent}
@@ -1605,6 +1676,7 @@ export default function Dashboard() {
                           setIsCreatingNote(false);
                           setNewNoteContent("");
                           setNewNoteImages([]);
+                          setNewNoteParentId(null);
                         }}
                       >
                         {t("cancel")}
@@ -1729,10 +1801,11 @@ export default function Dashboard() {
                     <div
                       className={`devlog-stream ${selectedTagFilter ? "devlog-stream--filtered" : ""} ${pointerDragIndex !== null ? "devlog-stream--dragging-active entries-list--dragging-active" : ""}`}
                     >
-                      {(selectedTagFilter
-                        ? entries.filter((e) => e.tags?.includes(selectedTagFilter))
-                        : entries
-                      ).map((entry, idx) => {
+                      {(() => {
+                        const flatMode = Boolean(selectedTagFilter);
+                        const renderCard = (entry: EntryMeta, idx: number, isChild: boolean): React.ReactNode => {
+                        const childList = isChild || flatMode ? [] : entries.filter((e) => e.parentId === entry.id);
+                        const isNestTarget = !isChild && pointerNestIndex === idx;
                         const isDragging = pointerDragIndex === idx;
                         const isDropTarget = pointerDropIndex === idx && pointerDragIndex !== null && pointerDragIndex !== idx;
                         const dropDirection = isDropTarget
@@ -1747,19 +1820,35 @@ export default function Dashboard() {
                         return (
                           <article
                             key={entry.id || entry.path}
-                            data-index={idx}
-                            className={`devlog-item ${entry.pinned ? "devlog-item--pinned" : ""} ${isDragging ? "devlog-item--dragging" : ""} ${dropDirection ? `devlog-item--drop-target-${dropDirection}` : ""}`}
-                            onPointerDown={(e) => handleStartCardDrag(e, idx)}
+                            data-index={isChild ? undefined : idx}
+                            className={`devlog-item ${isChild ? "devlog-item--child" : ""} ${isNestTarget ? "devlog-item--nest-target" : ""} ${entry.pinned ? "devlog-item--pinned" : ""} ${isDragging ? "devlog-item--dragging" : ""} ${dropDirection ? `devlog-item--drop-target-${dropDirection}` : ""}`}
+                            onPointerDown={isChild ? undefined : (e) => handleStartCardDrag(e, idx)}
                           >
                             {/* DevLog Item Header */}
                             <header className="devlog-item__header">
                               <div className="devlog-item__meta">
-                                <div
-                                  className="devlog-item__drag-handle"
-                                  title={t("reorderTitle")}
-                                >
-                                  ⠿
-                                </div>
+                                {!isChild && (
+                                  <div
+                                    className="devlog-item__drag-handle"
+                                    title={t("reorderTitle")}
+                                  >
+                                    ⠿
+                                  </div>
+                                )}
+
+                                {childList.length > 0 && (
+                                  <button
+                                    type="button"
+                                    className="devlog-children-toggle"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setCollapsedParents((prev) => ({ ...prev, [entry.id]: !prev[entry.id] }));
+                                    }}
+                                  >
+                                    <span>{collapsedParents[entry.id] ? "▸" : "▾"}</span>
+                                    <span>{t("subNotesCount")(childList.length)}</span>
+                                  </button>
+                                )}
 
                                 {entry.pinned && (
                                   <div className="devlog-item__pinned-badge" title={lang === "tr" ? "Başa sabitlendi" : "Pinned to top"}>
@@ -1820,6 +1909,40 @@ export default function Dashboard() {
 
                           {/* Quick Actions Toolbar */}
                           <div className="devlog-item__actions">
+                            {!isChild && !flatMode && (
+                              <button
+                                type="button"
+                                className="devlog-action-btn"
+                                title={t("addSubNoteTitle")}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setNewNoteParentId(entry.id);
+                                  setIsCreatingNote(true);
+                                  setNewNoteContent("");
+                                  setNewNoteImages([]);
+                                  window.scrollTo({ top: 0, behavior: "smooth" });
+                                }}
+                              >
+                                {t("addSubNote")}
+                              </button>
+                            )}
+
+                            {isChild && (
+                              <button
+                                type="button"
+                                className="devlog-action-btn"
+                                title={t("detachNoteTitle")}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEntryParent(active, entry.id, null)
+                                    .then(() => refreshEntries(active, true))
+                                    .catch((err) => alert(String(err)));
+                                }}
+                              >
+                                {t("detachNote")}
+                              </button>
+                            )}
+
                             <button
                               type="button"
                               className="devlog-action-btn"
@@ -1991,9 +2114,22 @@ export default function Dashboard() {
                         ) : (
                           <div className="devlog-item__divider" />
                         )}
+
+                        {isNestTarget && <div className="devlog-nest-hint">↳ {t("nestHint")}</div>}
+
+                        {childList.length > 0 && !collapsedParents[entry.id] && (
+                          <div className="devlog-children">
+                            {childList.map((child) => renderCard(child, -1, true))}
+                          </div>
+                        )}
                       </article>
                     );
-                  })}
+                        };
+                        const list = flatMode
+                          ? entries.filter((e) => e.tags?.includes(selectedTagFilter as string))
+                          : rootEntries;
+                        return list.map((entry, idx) => renderCard(entry, idx, false));
+                      })()}
                 </div>
               )}
                 </>

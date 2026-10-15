@@ -21,6 +21,8 @@ export interface EntryMeta {
   isAi?: boolean;
   /** List of tag names assigned to this entry */
   tags?: string[];
+  /** Id of the parent note when nested one level below another note */
+  parentId?: string | null;
 }
 
 export interface TodoItem {
@@ -273,4 +275,9 @@ export function restoreTrashItem(project: string, file: string): Promise<void> {
 
 export function purgeTrashItem(project: string, file: string): Promise<void> {
   return invoke("purge_trash_item", { project, file });
+}
+
+/** Nests a note under another note (single level); `parentId` null makes it top-level again. */
+export function setEntryParent(project: string, entryId: string, parentId: string | null): Promise<void> {
+  return invoke("set_entry_parent", { project, entryId, parentId });
 }

@@ -52,6 +52,8 @@ struct EntryMeta {
     pinned: bool,
     is_ai: bool,
     tags: Vec<String>,
+    /// Id of the parent note when this note is nested one level below another.
+    parent_id: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -393,6 +395,60 @@ fn purge_trash_item(app: AppHandle, project: String, file: String) -> Result<(),
     if meta.remove(&file).is_some() {
         write_trash_meta(&trash, &meta)?;
     }
+    let _ = app.emit("notes-updated", ());
+    Ok(())
+}
+
+/// One-level note hierarchy stored in `.tree.json`: child id -> parent id.
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct TreeStore {
+    #[serde(default)]
+    parents: HashMap<String, String>,
+}
+
+fn get_tree_store(project_dir: &PathBuf) -> TreeStore {
+    fs::read_to_string(project_dir.join(".tree.json"))
+        .ok()
+        .and_then(|c| serde_json::from_str::<TreeStore>(&c).ok())
+        .unwrap_or_default()
+}
+
+fn save_tree_store(project_dir: &PathBuf, store: &TreeStore) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    fs::write(project_dir.join(".tree.json"), json).map_err(|e| e.to_string())
+}
+
+/// Sets (or clears, when `parent_id` is None) the parent of a note.
+/// The hierarchy is a single level: a parent cannot have a parent, and a
+/// note that already has children cannot become a child.
+#[tauri::command]
+fn set_entry_parent(
+    app: AppHandle,
+    project: String,
+    entry_id: String,
+    parent_id: Option<String>,
+) -> Result<(), String> {
+    let clean = sanitize_name(&project)?;
+    let dir = projects_root(&app)?.join(clean);
+    let mut store = get_tree_store(&dir);
+    match parent_id {
+        None => {
+            store.parents.remove(&entry_id);
+        }
+        Some(parent) => {
+            if parent == entry_id {
+                return Err("Bir not kendi alt notu olamaz".into());
+            }
+            if store.parents.contains_key(&parent) {
+                return Err("Hedef not zaten bir alt not (yalnızca tek seviye desteklenir)".into());
+            }
+            if store.parents.values().any(|p| p == &entry_id) {
+                return Err("Alt notları olan bir not başka bir notun altına taşınamaz".into());
+            }
+            store.parents.insert(entry_id, parent);
+        }
+    }
+    save_tree_store(&dir, &store)?;
     let _ = app.emit("notes-updated", ());
     Ok(())
 }
@@ -870,10 +926,30 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
                 pinned: is_pinned,
                 is_ai,
                 tags,
+                parent_id: None,
             }
         })
         .filter(|e| !e.path.is_empty())
         .collect();
+
+    // Drop hierarchy links that point to missing notes or break the single-level rule.
+    let mut tree_store = get_tree_store(&dir);
+    {
+        let ids: std::collections::HashSet<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+        let before = tree_store.parents.len();
+        let parents_snapshot = tree_store.parents.clone();
+        tree_store.parents.retain(|child, parent| {
+            ids.contains(child.as_str())
+                && ids.contains(parent.as_str())
+                && !parents_snapshot.contains_key(parent.as_str())
+        });
+        if tree_store.parents.len() != before {
+            let _ = save_tree_store(&dir, &tree_store);
+        }
+    }
+    for e in entries.iter_mut() {
+        e.parent_id = tree_store.parents.get(&e.id).cloned();
+    }
 
     // Drop tag records of notes that no longer exist (deleted/renamed outside the app).
     let live_ids: std::collections::HashSet<&str> = entries.iter().map(|e| e.id.as_str()).collect();
@@ -1671,6 +1747,7 @@ pub fn run() {
             toggle_project_mcp_access,
             set_mcp_permission_setting,
             set_project_permission_override,
+            set_entry_parent,
             list_trash,
             restore_trash_item,
             purge_trash_item,

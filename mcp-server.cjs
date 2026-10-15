@@ -284,6 +284,40 @@ function tagSuffix(tags) {
   return tags && tags.length > 0 ? `  [etiketler: ${tags.join(", ")}]` : "";
 }
 
+// ---- Note hierarchy (shared with the app via <project>/.tree.json: child key -> parent key) ----
+function readTree(dir) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, ".tree.json"), "utf-8"));
+    return { parents: raw.parents && typeof raw.parents === "object" ? raw.parents : {} };
+  } catch {
+    return { parents: {} };
+  }
+}
+
+function writeTree(dir, tree) {
+  fs.writeFileSync(path.join(dir, ".tree.json"), JSON.stringify(tree, null, 2), "utf-8");
+}
+
+// Single level only: a parent cannot have a parent, and a note with children cannot become a child.
+function linkParent(dir, childFile, parentFile) {
+  const childKey = noteKey(childFile);
+  const tree = readTree(dir);
+  if (!parentFile) {
+    delete tree.parents[childKey];
+    writeTree(dir, tree);
+    return null;
+  }
+  const parentKey = noteKey(parentFile);
+  if (parentKey === childKey) throw new Error("Bir not kendi alt notu olamaz.");
+  if (tree.parents[parentKey]) throw new Error("Hedef not zaten bir alt not (yalnızca tek seviye desteklenir).");
+  if (Object.values(tree.parents).includes(childKey)) {
+    throw new Error("Alt notları olan bir not başka bir notun altına taşınamaz.");
+  }
+  tree.parents[childKey] = parentKey;
+  writeTree(dir, tree);
+  return parentKey;
+}
+
 function noteTitle(content) {
   const first = (content || "").split("\n").find((l) => l.trim()) || "";
   return first.replace(/^#+\s*/, "").trim().slice(0, 80) || "(boş not)";
@@ -326,11 +360,14 @@ function readPinnedIds(dir) {
 }
 
 // Lightweight index: title + short summary + tags, no full content.
-function listNotes(projectName, tagFilter, limit) {
+function listNotes(projectName, tagFilter, limit, parentName) {
   const { clean, dir } = accessibleDir(projectName);
   const tagStore = readTagStore(dir);
   const pinnedIds = readPinnedIds(dir);
   const wantedTag = tagFilter ? String(tagFilter).trim().toLowerCase() : "";
+  const parentOf = readTree(dir).parents;
+  const parentFile = parentName ? findNoteFile(dir, parentName) : null;
+  const parentKey = parentFile ? noteKey(parentFile) : null;
 
   let items = fs
     .readdirSync(dir)
@@ -342,6 +379,7 @@ function listNotes(projectName, tagFilter, limit) {
         file: f,
         title: noteTitle(content),
         summary: noteSummary(content),
+        key: noteKey(f),
         tags: tagStore.entries[noteKey(f)] || [],
         pinned: pinnedIds.includes(noteKey(f)),
         modified: new Date(fs.statSync(full).mtimeMs).toISOString(),
@@ -350,10 +388,44 @@ function listNotes(projectName, tagFilter, limit) {
     })
     .filter((n) => !wantedTag || n.tags.some((t) => t.toLowerCase() === wantedTag));
 
+  const allItems = items;
+  const fileOfKey = Object.fromEntries(
+    fs.readdirSync(dir)
+      .filter((f) => f.endsWith(".md") && f !== "todos.md" && !f.startsWith("."))
+      .map((f) => [noteKey(f), f])
+  );
+  // Attach hierarchy info: `parent` (file) and, for top-level notes, a light `children` list.
+  for (const n of allItems) {
+    const pk = parentOf[n.key];
+    n.parent = pk && fileOfKey[pk] ? fileOfKey[pk] : null;
+  }
+  for (const n of allItems) {
+    n.children = allItems
+      .filter((c) => c.parent && parentOf[c.key] === n.key)
+      .map((c) => ({ file: c.file, title: c.title }));
+  }
+
+  if (parentKey) {
+    // Children of one note, with full index detail
+    items = allItems.filter((n) => parentOf[n.key] === parentKey);
+  } else if (!wantedTag) {
+    // Default: top-level notes only (children are listed lightly under their parent)
+    items = allItems.filter((n) => !n.parent);
+  }
+
   items.sort((a, b) => (b.pinned - a.pinned) || b.modified.localeCompare(a.modified));
   const total = items.length;
   if (Number(limit) > 0) items = items.slice(0, Number(limit));
+  items = items.map(({ key, ...rest }) => rest);
   return { project: clean, total, returned: items.length, notes: items };
+}
+
+function setNoteParent(projectName, noteName, parentName) {
+  const { clean, dir } = accessibleDir(projectName);
+  const file = findNoteFile(dir, noteName);
+  const parentFile = parentName ? findNoteFile(dir, parentName) : null;
+  linkParent(dir, file, parentFile);
+  return { success: true, file, project: clean, parent: parentFile };
 }
 
 function readNote(projectName, noteName) {
@@ -362,7 +434,15 @@ function readNote(projectName, noteName) {
   const tags = readTagStore(dir).entries[noteKey(file)] || [];
   const pinned = readPinnedIds(dir).includes(noteKey(file));
   const content = fs.readFileSync(path.join(dir, file), "utf-8").trim();
-  return `# ${file}\nProje: ${clean}${pinned ? " | 📌 sabitli" : ""}${tags.length ? ` | etiketler: ${tags.join(", ")}` : ""}\n\n${content}\n`;
+  const parentOf = readTree(dir).parents;
+  const mdFiles = fs.readdirSync(dir).filter((f) => f.endsWith(".md") && !f.startsWith("."));
+  const fileOfKey = Object.fromEntries(mdFiles.map((f) => [noteKey(f), f]));
+  const parentFile = fileOfKey[parentOf[noteKey(file)]];
+  const childFiles = mdFiles.filter((f) => parentOf[noteKey(f)] === noteKey(file));
+  let hier = "";
+  if (parentFile) hier += ` | üst not: ${parentFile}`;
+  if (childFiles.length) hier += ` | alt notlar: ${childFiles.join(", ")}`;
+  return `# ${file}\nProje: ${clean}${pinned ? " | 📌 sabitli" : ""}${tags.length ? ` | etiketler: ${tags.join(", ")}` : ""}${hier}\n\n${content}\n`;
 }
 
 function setNotePinned(projectName, noteName, pinned) {
@@ -404,6 +484,7 @@ function getProjectContext(projectName, tagFilter) {
   const notes = [];
   const images = [];
   const tagStore = readTagStore(dir);
+  const parentOf = readTree(dir).parents;
   const wantedTag = tagFilter ? String(tagFilter).trim().toLowerCase() : "";
 
   for (const f of files) {
@@ -413,7 +494,7 @@ function getProjectContext(projectName, tagFilter) {
       if (wantedTag && !tags.some((t) => t.toLowerCase() === wantedTag)) continue;
       const content = fs.readFileSync(fullPath, "utf-8");
       const isPinned = pinnedIds.some((p) => f.startsWith(p));
-      notes.push({ file: f, content: content.trim(), isPinned, tags });
+      notes.push({ file: f, content: content.trim(), isPinned, tags, key: noteKey(f) });
     } else if (f.endsWith(".png") && !wantedTag) {
       images.push(f);
     }
@@ -445,32 +526,33 @@ function getProjectContext(projectName, tagFilter) {
     output += `\n---\n\n`;
   }
 
-  const pinnedNotes = notes.filter((n) => n.isPinned);
+  // Children are rendered under their parent; with a tag filter the list stays flat.
+  const keys = new Set(notes.map((n) => n.key));
+  const isChildNote = (n) => !wantedTag && parentOf[n.key] && keys.has(parentOf[n.key]);
+  const childrenOf = (n) => (wantedTag ? [] : notes.filter((c) => parentOf[c.key] === n.key && isChildNote(c)));
+  const renderNote = (n) => {
+    let block = `### ${n.file}${tagSuffix(n.tags)}\n${n.content}\n\n`;
+    for (const c of childrenOf(n)) {
+      block += `#### ↳ ${c.file}${tagSuffix(c.tags)}\n${c.content}\n\n`;
+    }
+    return block;
+  };
+
+  const topNotes = notes.filter((n) => !isChildNote(n));
+  const pinnedNotes = topNotes.filter((n) => n.isPinned);
   if (pinnedNotes.length > 0) {
-    output += `## 📌 Sabitlenmiş Önemli Notlar & Kurallar
-
-`;
+    output += `## 📌 Sabitlenmiş Önemli Notlar & Kurallar\n\n`;
     pinnedNotes.forEach((n) => {
-      output += `### ${n.file}${tagSuffix(n.tags)}
-${n.content}
-
-`;
+      output += renderNote(n);
     });
-    output += `---
-
-`;
+    output += `---\n\n`;
   }
 
-  const regularNotes = notes.filter((n) => !n.isPinned);
+  const regularNotes = topNotes.filter((n) => !n.isPinned);
   if (regularNotes.length > 0) {
-    output += `## 📝 Notlar ve Kayıtlar
-
-`;
+    output += `## 📝 Notlar ve Kayıtlar\n\n`;
     regularNotes.forEach((n) => {
-      output += `### ${n.file}${tagSuffix(n.tags)}
-${n.content}
-
-`;
+      output += renderNote(n);
     });
   }
 
@@ -550,7 +632,7 @@ function createProject(projectName) {
   return { success: true, project: clean };
 }
 
-function addProjectNote(projectName, content, tags) {
+function addProjectNote(projectName, content, tags, parentName) {
   const clean = sanitizeName(projectName);
   if (!isProjectAllowed(clean)) {
     throw new Error(`"${clean}" projesine yazma izni bulunmuyor.`);
@@ -571,7 +653,17 @@ function addProjectNote(projectName, content, tags) {
 
   fs.writeFileSync(filePath, content.trim(), "utf-8");
   const appliedTags = normalizeTags(tags).length > 0 ? applyTags(dir, fileName, tags) : [];
-  return { success: true, file: fileName, project: clean, tags: appliedTags };
+  let parent = null;
+  if (parentName) {
+    try {
+      parent = findNoteFile(dir, parentName);
+      linkParent(dir, fileName, parent);
+    } catch (e) {
+      // Keep the note even if the hierarchy link is invalid; report it in the result.
+      return { success: true, file: fileName, project: clean, tags: appliedTags, parent: null, parentError: e.message };
+    }
+  }
+  return { success: true, file: fileName, project: clean, tags: appliedTags, parent };
 }
 
 function editProjectNote(projectName, noteName, content) {
@@ -630,6 +722,11 @@ function moveToTrash(dir, fileName) {
   // Drop tags/pin of the note unless other files (e.g. screenshots) still share its key
   const stillThere = fs.readdirSync(dir).some((f) => !f.startsWith(".") && noteKey(f) === key);
   if (!stillThere) {
+    const tree = readTree(dir);
+    if (tree.parents[key]) {
+      delete tree.parents[key];
+      writeTree(dir, tree);
+    }
     applyTags(dir, fileName, []);
     if (wasPinned) {
       fs.writeFileSync(path.join(dir, ".pinned.json"), JSON.stringify(readPinnedIds(dir).filter((i) => i !== key), null, 2), "utf-8");
@@ -802,13 +899,14 @@ const TOOLS = [
   },
   {
     name: "notes_list_notes",
-    description: "Projedeki notların hafif dizinini döner: başlık, kısa özet, etiketler, sabitli mi, değişiklik zamanı. Tam içerik yok (token dostu). Sabitliler önce, sonra en yeni. 'tag' ve 'limit' ile daraltılabilir; 'limit' ile son değişen notları almak için kullan.",
+    description: "Projedeki notların hafif dizinini döner: başlık, kısa özet, etiketler, sabitli mi, değişiklik zamanı, üst/alt not bilgisi. Tam içerik yok (token dostu). Sabitliler önce, sonra en yeni. 'tag' ve 'limit' ile daraltılabilir; 'limit' ile son değişen notları almak için kullan.",
     inputSchema: {
       type: "object",
       properties: {
         project: { type: "string", description: "Proje adı" },
         tag: { type: "string", description: "İsteğe bağlı etiket filtresi" },
         limit: { type: "number", description: "İsteğe bağlı: en fazla kaç not dönsün" },
+        parent: { type: "string", description: "İsteğe bağlı: yalnızca bu notun alt notlarını listele. Verilmezse yalnızca üst seviye notlar döner (alt notlar 'children' içinde başlık olarak görünür); tag verilirse düz liste." },
       },
       required: ["project"],
     },
@@ -883,8 +981,22 @@ const TOOLS = [
         project: { type: "string", description: "Notun kaydedileceği proje adı" },
         content: { type: "string", description: "Not içeriği (Markdown formatında)" },
         tags: { type: "array", items: { type: "string" }, description: "İsteğe bağlı etiketler (örn: ['karar', 'bug'])" },
+        parent: { type: "string", description: "İsteğe bağlı: yeni notu bu notun (dosya adı/başlangıcı) alt notu olarak ekle (tek seviye)" },
       },
       required: ["project", "content"],
+    },
+  },
+  {
+    name: "notes_set_parent",
+    description: "Bir notu başka bir notun altına taşır (tek seviyeli hiyerarşi) veya parent verilmezse üst seviyeye çıkarır. Alt notlar bir konunun deposu/fork'u gibi kullanılabilir.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Proje adı" },
+        noteName: { type: "string", description: "Taşınacak notun dosya adı veya başlangıcı" },
+        parent: { type: "string", description: "Üst notun dosya adı veya başlangıcı; boş bırakılırsa üst seviyeye çıkarır" },
+      },
+      required: ["project", "noteName"],
     },
   },
   {
@@ -1037,7 +1149,7 @@ function logMcpActivity(toolName, project, details) {
         logMcpActivity("notes_get_project_context", args.project, args.tag ? `Notları okudu (etiket: ${args.tag})` : "Notları ve görevleri okudu");
         respond({ content: [{ type: "text", text: context }] });
       } else if (name === "notes_list_notes") {
-        const res = listNotes(args.project, args.tag, args.limit);
+        const res = listNotes(args.project, args.tag, args.limit, args.parent);
         logMcpActivity("notes_list_notes", args.project, `Not dizini okudu (${res.returned}/${res.total})`);
         respond({ content: [{ type: "text", text: JSON.stringify(res, null, 2) }] });
       } else if (name === "notes_read_note") {
@@ -1066,9 +1178,13 @@ function logMcpActivity(toolName, project, details) {
         logMcpActivity("notes_create_project", args.project, `Yeni proje açtı: "${res.project}"`);
         respond({ content: [{ type: "text", text: `Proje başarıyla oluşturuldu: ${res.project}` }] });
       } else if (name === "notes_add_note") {
-        const res = addProjectNote(args.project, args.content, args.tags);
-        logMcpActivity("notes_add_note", args.project, `Yeni not oluşturdu: ${res.file}${res.tags.length ? ` [${res.tags.join(", ")}]` : ""}`);
-        respond({ content: [{ type: "text", text: `Not başarıyla eklendi: ${res.file}` }] });
+        const res = addProjectNote(args.project, args.content, args.tags, args.parent);
+        logMcpActivity("notes_add_note", args.project, `Yeni not oluşturdu: ${res.file}${res.tags.length ? ` [${res.tags.join(", ")}]` : ""}${res.parent ? ` (alt not: ${res.parent})` : ""}`);
+        respond({ content: [{ type: "text", text: `Not başarıyla eklendi: ${res.file}${res.parent ? ` (üst not: ${res.parent})` : ""}${res.parentError ? ` — uyarı: üst not bağlanamadı: ${res.parentError}` : ""}` }] });
+      } else if (name === "notes_set_parent") {
+        const res = setNoteParent(args.project, args.noteName, args.parent);
+        logMcpActivity("notes_set_parent", args.project, res.parent ? `${res.file} -> alt not: ${res.parent}` : `${res.file} üst seviyeye çıkarıldı`);
+        respond({ content: [{ type: "text", text: res.parent ? `${res.file} artık ${res.parent} notunun alt notu.` : `${res.file} üst seviyeye çıkarıldı.` }] });
       } else if (name === "notes_set_tags") {
         const res = setNoteTags(args.project, args.noteName, args.tags);
         logMcpActivity("notes_set_tags", args.project, `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]`);
