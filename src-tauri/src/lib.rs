@@ -51,6 +51,7 @@ struct EntryMeta {
     preview: Option<String>,
     pinned: bool,
     is_ai: bool,
+    tags: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -211,6 +212,93 @@ fn toggle_pin_entry(app: AppHandle, project: String, entry_id: String) -> Result
     save_pinned_ids(&dir, &ids)?;
     let _ = app.emit("notes-updated", ());
     Ok(is_pinned)
+}
+
+/// Per-project tag data stored in `.tags.json`: tag name -> hex color,
+/// and note id -> list of tag names.
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct TagStore {
+    #[serde(default)]
+    definitions: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    entries: HashMap<String, Vec<String>>,
+}
+
+fn get_tag_store(project_dir: &PathBuf) -> TagStore {
+    fs::read_to_string(project_dir.join(".tags.json"))
+        .ok()
+        .and_then(|c| serde_json::from_str::<TagStore>(&c).ok())
+        .unwrap_or_default()
+}
+
+fn save_tag_store(project_dir: &PathBuf, store: &TagStore) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    fs::write(project_dir.join(".tags.json"), json).map_err(|e| e.to_string())
+}
+
+fn cleanup_unused_tags(store: &mut TagStore) -> bool {
+    let before_len = store.definitions.len();
+    store.definitions.retain(|tag_name, _| {
+        store.entries.values().any(|tags| tags.contains(tag_name))
+    });
+    store.definitions.len() != before_len
+}
+
+#[tauri::command]
+fn get_project_tags(
+    app: AppHandle,
+    project: String,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let clean = sanitize_name(&project)?;
+    let dir = projects_root(&app)?.join(clean);
+    let mut store = get_tag_store(&dir);
+    if cleanup_unused_tags(&mut store) {
+        let _ = save_tag_store(&dir, &store);
+    }
+    Ok(store.definitions)
+}
+
+/// Replaces the tag list of one note. `definitions` carries any newly
+/// created tags (name -> color) so they are persisted alongside.
+#[tauri::command]
+fn set_entry_tags(
+    app: AppHandle,
+    project: String,
+    entry_id: String,
+    tags: Vec<String>,
+    definitions: std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    let clean = sanitize_name(&project)?;
+    let dir = projects_root(&app)?.join(clean);
+    let mut store = get_tag_store(&dir);
+    for (name, color) in definitions {
+        store.definitions.entry(name).or_insert(color);
+    }
+    if tags.is_empty() {
+        store.entries.remove(&entry_id);
+    } else {
+        store.entries.insert(entry_id, tags);
+    }
+    cleanup_unused_tags(&mut store);
+    save_tag_store(&dir, &store)?;
+    let _ = app.emit("notes-updated", ());
+    Ok(())
+}
+
+/// Removes a tag definition and strips it from every note.
+#[tauri::command]
+fn delete_project_tag(app: AppHandle, project: String, name: String) -> Result<(), String> {
+    let clean = sanitize_name(&project)?;
+    let dir = projects_root(&app)?.join(clean);
+    let mut store = get_tag_store(&dir);
+    store.definitions.remove(&name);
+    for tags in store.entries.values_mut() {
+        tags.retain(|t| t != &name);
+    }
+    store.entries.retain(|_, tags| !tags.is_empty());
+    save_tag_store(&dir, &store)?;
+    let _ = app.emit("notes-updated", ());
+    Ok(())
 }
 
 fn parse_todos_from_file(file_path: &PathBuf) -> Vec<TodoItem> {
@@ -474,6 +562,10 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
 
     let pinned_ids = get_pinned_ids(&dir);
     let order_ids = get_order_ids(&dir);
+    let mut tag_store = get_tag_store(&dir);
+    if cleanup_unused_tags(&mut tag_store) {
+        let _ = save_tag_store(&dir, &tag_store);
+    }
 
     struct GroupItem {
         md_path: Option<PathBuf>,
@@ -582,6 +674,8 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
                 stem.ends_with("_ai") || stem.contains("_ai_") || stem.ends_with("_ai_note")
             });
 
+            let tags = tag_store.entries.get(&key).cloned().unwrap_or_default();
+
             EntryMeta {
                 id: key.clone(),
                 name: key,
@@ -592,10 +686,20 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
                 preview,
                 pinned: is_pinned,
                 is_ai,
+                tags,
             }
         })
         .filter(|e| !e.path.is_empty())
         .collect();
+
+    // Drop tag records of notes that no longer exist (deleted/renamed outside the app).
+    let live_ids: std::collections::HashSet<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+    let before = tag_store.entries.len();
+    tag_store.entries.retain(|id, _| live_ids.contains(id.as_str()));
+    if tag_store.entries.len() != before {
+        cleanup_unused_tags(&mut tag_store);
+        let _ = save_tag_store(&dir, &tag_store);
+    }
 
     entries.sort_by(|a, b| {
         // Priority 1: Pinned status ALWAYS takes precedence.
@@ -751,6 +855,16 @@ fn delete_entry(app: AppHandle, path: String, image_paths: Option<Vec<String>>) 
             if ip.exists() {
                 let _ = fs::remove_file(ip);
             }
+        }
+    }
+    if let Some(parent) = p.parent() {
+        let parent_buf = parent.to_path_buf();
+        let mut store = get_tag_store(&parent_buf);
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let entry_key = extract_base_key(stem);
+        if store.entries.remove(&entry_key).is_some() {
+            cleanup_unused_tags(&mut store);
+            let _ = save_tag_store(&parent_buf, &store);
         }
     }
     let _ = app.emit("notes-updated", ());
@@ -1336,6 +1450,9 @@ pub fn run() {
             reorder_entries,
             export_ai_context,
             toggle_pin_entry,
+            get_project_tags,
+            set_entry_tags,
+            delete_project_tag,
             list_todos,
             add_todo,
             toggle_todo,

@@ -53,6 +53,17 @@ export const translations = {
     clickToZoom: "Tam boyutta büyütmek için tıklayın",
     removeImage: "Bu görseli kaldır",
 
+    // Tags & Context Menu
+    tags: "Etiketler",
+    manageTags: "Etiketleri Yönet",
+    addTag: "Etiket Ekle",
+    newTagPlaceholder: "Yeni etiket adı...",
+    createTagBtn: "Oluştur",
+    noTagsInProject: "Bu projede henüz etiket yok.",
+    filterAll: "Tümü",
+    filterByTag: "Etikete göre filtrele",
+    deleteTagConfirm: (t: string) => `"${t}" etiketini tüm projeden silmek istiyor musunuz?`,
+
     // Inline Editor & Quick Note
     save: "Kaydet",
     saved: "Kaydedildi ✓",
@@ -211,6 +222,17 @@ export const translations = {
     doubleClickToEdit: "Double-click to edit",
     clickToZoom: "Click to zoom full size",
     removeImage: "Remove this image",
+
+    // Tags & Context Menu
+    tags: "Tags",
+    manageTags: "Manage Tags",
+    addTag: "Add Tag",
+    newTagPlaceholder: "New tag name...",
+    createTagBtn: "Create",
+    noTagsInProject: "No tags created in this project yet.",
+    filterAll: "All",
+    filterByTag: "Filter by tag",
+    deleteTagConfirm: (t: string) => `Delete tag "${t}" from entire project?`,
 
     // Inline Editor & Quick Note
     save: "Save",

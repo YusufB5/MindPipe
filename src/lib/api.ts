@@ -19,6 +19,8 @@ export interface EntryMeta {
   pinned: boolean;
   /** Whether the note was created or managed by AI */
   isAi?: boolean;
+  /** List of tag names assigned to this entry */
+  tags?: string[];
 }
 
 export interface TodoItem {
@@ -211,6 +213,22 @@ export function updateCaptureShortcut(newShortcut: string): Promise<string> {
   return invoke("update_capture_shortcut", { newShortcut });
 }
 
+/** Returns the project's tag definitions (name -> hex color). */
+export function getProjectTags(project: string): Promise<Record<string, string>> {
+  return invoke("get_project_tags", { project });
+}
 
+/** Updates tags for a specific entry and optionally saves new tag color definitions. */
+export function setEntryTags(
+  project: string,
+  entryId: string,
+  tags: string[],
+  definitions: Record<string, string>
+): Promise<void> {
+  return invoke("set_entry_tags", { project, entryId, tags, definitions });
+}
 
-
+/** Deletes a tag definition and removes it from all entries in the project. */
+export function deleteProjectTag(project: string, name: string): Promise<void> {
+  return invoke("delete_project_tag", { project, name });
+}

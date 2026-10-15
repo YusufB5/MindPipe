@@ -30,6 +30,9 @@ import {
   clearMcpLogs,
   getCaptureShortcut,
   updateCaptureShortcut,
+  getProjectTags,
+  setEntryTags,
+  deleteProjectTag,
   type EntryMeta,
   type TodoItem,
   type SearchResultItem,
@@ -110,12 +113,30 @@ function AiSparkleIcon({ size = 11, className = "" }: { size?: number; className
   );
 }
 
+const TAG_PALETTE = [
+  "#ef4444", // Red (Bug)
+  "#f97316", // Orange
+  "#f59e0b", // Amber (Optimization)
+  "#10b981", // Emerald (Feature)
+  "#06b6d4", // Cyan
+  "#3b82f6", // Blue (Info/Doc)
+  "#8b5cf6", // Purple (Idea)
+  "#ec4899", // Pink (UI/UX)
+];
+
 export default function Dashboard() {
   const [projects, setProjects] = useState<string[]>([]);
   const [active, setActive] = useState<string>("inbox");
   const [entries, setEntries] = useState<EntryMeta[]>([]);
   const [newProjectName, setNewProjectName] = useState("");
   const [loading, setLoading] = useState(true);
+
+  // Tagging state
+  const [projectTags, setProjectTags] = useState<Record<string, string>>({});
+  const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
+  const [tagModalEntry, setTagModalEntry] = useState<EntryMeta | null>(null);
+  const [newTagName, setNewTagName] = useState("");
+  const [newTagColor, setNewTagColor] = useState("#3b82f6");
 
   // View mode tab: "notes" | "todos"
   const [activeTab, setActiveTab] = useState<"notes" | "todos">("notes");
@@ -323,8 +344,12 @@ export default function Dashboard() {
   async function refreshEntries(project: string, isSilent = false) {
     if (!isSilent) setLoading(true);
     try {
-      const list = await listEntries(project);
+      const [list, tags] = await Promise.all([
+        listEntries(project),
+        getProjectTags(project).catch(() => ({})),
+      ]);
       setEntries(list);
+      setProjectTags(tags || {});
 
       // Load full contents for DevLog stream
       const noteEntries = list.filter((e) => e.kind === "note" || e.kind === "mixed");
@@ -377,11 +402,118 @@ export default function Dashboard() {
   // Refresh entries and todos on project change
   useEffect(() => {
     if (active) {
+      setSelectedTagFilter(null);
       refreshEntries(active);
       refreshTodos(active);
       setExpandedNotes({});
     }
   }, [active]);
+
+  // Close tag modal on escape
+  useEffect(() => {
+    function handleGlobalKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setTagModalEntry(null);
+      }
+    }
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown);
+    };
+  }, []);
+
+  async function handleToggleTagOnEntry(entry: EntryMeta, tagName: string) {
+    const currentTags = entry.tags || [];
+    const isPresent = currentTags.includes(tagName);
+    const updatedTags = isPresent
+      ? currentTags.filter((t) => t !== tagName)
+      : [...currentTags, tagName];
+
+    const updatedEntries = entries.map((e) =>
+      e.id === entry.id ? { ...e, tags: updatedTags } : e
+    );
+    setEntries(updatedEntries);
+
+    if (tagModalEntry && tagModalEntry.id === entry.id) {
+      setTagModalEntry({ ...tagModalEntry, tags: updatedTags });
+    }
+
+    let nextDefs = { ...projectTags };
+    // If tag was removed from this note, check if any note in the project still has it
+    if (isPresent) {
+      const isTagStillUsed = updatedEntries.some((e) => (e.tags || []).includes(tagName));
+      if (!isTagStillUsed) {
+        delete nextDefs[tagName];
+        setProjectTags(nextDefs);
+        if (selectedTagFilter === tagName) {
+          setSelectedTagFilter(null);
+        }
+      }
+    }
+
+    try {
+      await setEntryTags(active, entry.id, updatedTags, nextDefs);
+    } catch (err) {
+      console.error("Failed to update tags:", err);
+      refreshEntries(active, true);
+    }
+  }
+
+  async function handleCreateNewTag(entry: EntryMeta) {
+    const clean = newTagName.trim();
+    if (!clean) return;
+
+    const updatedDefs = { ...projectTags, [clean]: newTagColor };
+    const currentTags = entry.tags || [];
+    const updatedTags = currentTags.includes(clean) ? currentTags : [...currentTags, clean];
+
+    setProjectTags(updatedDefs);
+    setEntries((prev) =>
+      prev.map((e) => (e.id === entry.id ? { ...e, tags: updatedTags } : e))
+    );
+    if (tagModalEntry && tagModalEntry.id === entry.id) {
+      setTagModalEntry({ ...tagModalEntry, tags: updatedTags });
+    }
+    setNewTagName("");
+
+    try {
+      await setEntryTags(active, entry.id, updatedTags, updatedDefs);
+    } catch (err) {
+      console.error("Failed to create tag:", err);
+      refreshEntries(active, true);
+    }
+  }
+
+  async function handleDeleteProjectTag(tagName: string) {
+    if (!window.confirm(t("deleteTagConfirm")(tagName))) return;
+
+    const updatedDefs = { ...projectTags };
+    delete updatedDefs[tagName];
+    setProjectTags(updatedDefs);
+
+    setEntries((prev) =>
+      prev.map((e) => ({
+        ...e,
+        tags: (e.tags || []).filter((t) => t !== tagName),
+      }))
+    );
+    if (tagModalEntry) {
+      setTagModalEntry({
+        ...tagModalEntry,
+        tags: (tagModalEntry.tags || []).filter((t) => t !== tagName),
+      });
+    }
+    if (selectedTagFilter === tagName) {
+      setSelectedTagFilter(null);
+    }
+
+    try {
+      await deleteProjectTag(active, tagName);
+    } catch (err) {
+      console.error("Failed to delete project tag:", err);
+      refreshEntries(active, true);
+    }
+  }
 
   // Real-time auto refresh from backend events and window focus
   useEffect(() => {
@@ -477,6 +609,7 @@ export default function Dashboard() {
   function handleStartCardDrag(e: React.PointerEvent, index: number) {
     if (e.button !== 0) return; // Only primary mouse button
     if (searchQuery.trim()) return; // Don't reorder during search results
+    if (selectedTagFilter) return; // Filtered indices don't match the full order
 
     // Ignore interactive children
     const target = e.target as HTMLElement;
@@ -1467,57 +1600,145 @@ export default function Dashboard() {
                   </p>
                 </div>
               ) : (
-                <div
-                  className={`devlog-stream ${pointerDragIndex !== null ? "devlog-stream--dragging-active entries-list--dragging-active" : ""}`}
-                >
-                  {entries.map((entry, idx) => {
-                    const isDragging = pointerDragIndex === idx;
-                    const isDropTarget = pointerDropIndex === idx && pointerDragIndex !== null && pointerDragIndex !== idx;
-                    const dropDirection = isDropTarget
-                      ? (pointerDropIndex! > pointerDragIndex! ? "below" : "above")
-                      : null;
-                    const isInlineEditing = inlineEditingPath === entry.path;
-                    const fullContent = noteContents[entry.path] ?? entry.preview ?? "";
-                    const isLong = fullContent.length > 380 || fullContent.split("\n").filter((l) => l.trim().length > 0).length > 7;
-                    const isExpanded = Boolean(expandedNotes[entry.path]);
-                    const shouldClamp = isLong && !isExpanded && !isInlineEditing;
-
-                    return (
-                      <article
-                        key={entry.id || entry.path}
-                        data-index={idx}
-                        className={`devlog-item ${entry.pinned ? "devlog-item--pinned" : ""} ${isDragging ? "devlog-item--dragging" : ""} ${dropDirection ? `devlog-item--drop-target-${dropDirection}` : ""}`}
-                        onPointerDown={(e) => handleStartCardDrag(e, idx)}
+                <>
+                  {/* Tag Filter Bar */}
+                  {Object.keys(projectTags).some((tag) => entries.some((e) => e.tags?.includes(tag))) && !searchQuery.trim() && (
+                    <div className="devlog-tag-filter-bar">
+                      <button
+                        type="button"
+                        className={`devlog-tag-filter-pill ${selectedTagFilter === null ? "devlog-tag-filter-pill--active" : ""}`}
+                        onClick={() => setSelectedTagFilter(null)}
                       >
-                        {/* DevLog Item Header */}
-                        <header className="devlog-item__header">
-                          <div className="devlog-item__meta">
-                            <div
-                              className="devlog-item__drag-handle"
-                              title={t("reorderTitle")}
+                        {t("filterAll")} ({entries.length})
+                      </button>
+                      {Object.entries(projectTags)
+                        .filter(([tag]) => entries.some((e) => e.tags?.includes(tag)))
+                        .map(([tag, color]) => {
+                          const count = entries.filter((e) => e.tags?.includes(tag)).length;
+                          const isActive = selectedTagFilter === tag;
+                          return (
+                            <button
+                              key={tag}
+                              type="button"
+                              className={`devlog-tag-filter-pill ${isActive ? "devlog-tag-filter-pill--active" : ""}`}
+                              style={{ "--tag-color": color } as React.CSSProperties}
+                              onClick={() => setSelectedTagFilter(isActive ? null : tag)}
                             >
-                              ⠿
-                            </div>
+                              <span className="devlog-tag-badge__dot" />
+                              <span>{tag}</span>
+                              <span className="devlog-tag-filter-pill__count">{count}</span>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  )}
 
-                            {entry.pinned && (
-                              <div className="devlog-item__pinned-badge" title={lang === "tr" ? "Başa sabitlendi" : "Pinned to top"}>
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                  <path d="M16 3H8v2h1v5l-2 3v2h5v6l1 1 1-1v-6h5v-2l-2-3V5h1V3z" />
-                                </svg>
-                                <span>{t("pinnedBadge")}</span>
+                  {selectedTagFilter && entries.filter((e) => e.tags?.includes(selectedTagFilter)).length === 0 ? (
+                    <div className="empty-state">
+                      <p className="empty-state__title">
+                        {lang === "tr" ? `"${selectedTagFilter}" etiketine ait not bulunamadı` : `No notes found for tag "${selectedTagFilter}"`}
+                      </p>
+                      <button
+                        type="button"
+                        className="btn btn--secondary"
+                        style={{ marginTop: 10 }}
+                        onClick={() => setSelectedTagFilter(null)}
+                      >
+                        {t("filterAll")}
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      className={`devlog-stream ${selectedTagFilter ? "devlog-stream--filtered" : ""} ${pointerDragIndex !== null ? "devlog-stream--dragging-active entries-list--dragging-active" : ""}`}
+                    >
+                      {(selectedTagFilter
+                        ? entries.filter((e) => e.tags?.includes(selectedTagFilter))
+                        : entries
+                      ).map((entry, idx) => {
+                        const isDragging = pointerDragIndex === idx;
+                        const isDropTarget = pointerDropIndex === idx && pointerDragIndex !== null && pointerDragIndex !== idx;
+                        const dropDirection = isDropTarget
+                          ? (pointerDropIndex! > pointerDragIndex! ? "below" : "above")
+                          : null;
+                        const isInlineEditing = inlineEditingPath === entry.path;
+                        const fullContent = noteContents[entry.path] ?? entry.preview ?? "";
+                        const isLong = fullContent.length > 380 || fullContent.split("\n").filter((l) => l.trim().length > 0).length > 7;
+                        const isExpanded = Boolean(expandedNotes[entry.path]);
+                        const shouldClamp = isLong && !isExpanded && !isInlineEditing;
+
+                        return (
+                          <article
+                            key={entry.id || entry.path}
+                            data-index={idx}
+                            className={`devlog-item ${entry.pinned ? "devlog-item--pinned" : ""} ${isDragging ? "devlog-item--dragging" : ""} ${dropDirection ? `devlog-item--drop-target-${dropDirection}` : ""}`}
+                            onPointerDown={(e) => handleStartCardDrag(e, idx)}
+                          >
+                            {/* DevLog Item Header */}
+                            <header className="devlog-item__header">
+                              <div className="devlog-item__meta">
+                                <div
+                                  className="devlog-item__drag-handle"
+                                  title={t("reorderTitle")}
+                                >
+                                  ⠿
+                                </div>
+
+                                {entry.pinned && (
+                                  <div className="devlog-item__pinned-badge" title={lang === "tr" ? "Başa sabitlendi" : "Pinned to top"}>
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                      <path d="M16 3H8v2h1v5l-2 3v2h5v6l1 1 1-1v-6h5v-2l-2-3V5h1V3z" />
+                                    </svg>
+                                    <span>{t("pinnedBadge")}</span>
+                                  </div>
+                                )}
+
+                                {entry.isAi && (
+                                  <span className="entry__ai-tag" title={lang === "tr" ? "AI tarafından oluşturuldu" : "Created by AI"}>
+                                    <AiSparkleIcon size={11} />
+                                  </span>
+                                )}
+
+                                <time className="devlog-item__time">
+                                  {formatTimestamp(entry.modified)}
+                                </time>
+
+                                {/* Tags list */}
+                                <div className="devlog-item__tags">
+                                  {(entry.tags || []).map((tagName) => {
+                                    const color = projectTags[tagName] || "#f59e0b";
+                                    return (
+                                      <span
+                                        key={tagName}
+                                        className="devlog-tag-badge devlog-tag-badge--removable"
+                                        style={{ "--tag-color": color } as React.CSSProperties}
+                                        title={lang === "tr" ? `"${tagName}" etiketini bu nottan kaldırmak için tıklayın` : `Click to remove "${tagName}" tag`}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleToggleTagOnEntry(entry, tagName);
+                                        }}
+                                      >
+                                        <span className="devlog-tag-badge__dot" />
+                                        <span>{tagName}</span>
+                                        <span className="devlog-tag-badge__close" aria-hidden="true">✕</span>
+                                      </span>
+                                    );
+                                  })}
+                                  <button
+                                    type="button"
+                                    className="devlog-tag-add-btn"
+                                    title={t("manageTags")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setTagModalEntry(entry);
+                                    }}
+                                  >
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                      <path d="M12 5v14M5 12h14" />
+                                    </svg>
+                                    <span>{t("addTag")}</span>
+                                  </button>
+                                </div>
                               </div>
-                            )}
-
-                            {entry.isAi && (
-                              <span className="entry__ai-tag" title={lang === "tr" ? "AI tarafından oluşturuldu" : "Created by AI"}>
-                                <AiSparkleIcon size={11} />
-                              </span>
-                            )}
-
-                            <time className="devlog-item__time">
-                              {formatTimestamp(entry.modified)}
-                            </time>
-                          </div>
 
                           {/* Quick Actions Toolbar */}
                           <div className="devlog-item__actions">
@@ -1696,6 +1917,8 @@ export default function Dashboard() {
                     );
                   })}
                 </div>
+              )}
+                </>
               )}
             </>
           )}
@@ -2518,6 +2741,122 @@ export default function Dashboard() {
               >
                 {lang === "tr" ? "Kapat" : "Close"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+
+      {/* Tag Picker & Manager Modal */}
+      {tagModalEntry && (
+        <div
+          className="tag-modal-overlay"
+          onClick={() => setTagModalEntry(null)}
+        >
+          <div
+            className="tag-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="tag-modal__header">
+              <div className="tag-modal__title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                  <line x1="7" y1="7" x2="7.01" y2="7" />
+                </svg>
+                <span>{t("manageTags")}</span>
+              </div>
+              <button
+                type="button"
+                className="tag-modal__close"
+                onClick={() => setTagModalEntry(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* List of existing tags */}
+            <div className="tag-modal__list">
+              {Object.entries(projectTags).filter(([tagName]) => entries.some((e) => (e.tags || []).includes(tagName))).length === 0 ? (
+                <div style={{ fontSize: "11.5px", color: "var(--text-dim)", padding: "4px 0" }}>
+                  {t("noTagsInProject")}
+                </div>
+              ) : (
+                Object.entries(projectTags)
+                  .filter(([tagName]) => entries.some((e) => (e.tags || []).includes(tagName)))
+                  .map(([tagName, color]) => {
+                    const isActive = (tagModalEntry.tags || []).includes(tagName);
+                    return (
+                      <span
+                        key={tagName}
+                        className={`tag-modal__chip ${isActive ? "tag-modal__chip--active" : ""}`}
+                        style={{ "--tag-color": color } as React.CSSProperties}
+                        onClick={() => handleToggleTagOnEntry(tagModalEntry, tagName)}
+                        title={isActive ? (lang === "tr" ? "Kaldırmak için tıkla" : "Click to remove") : (lang === "tr" ? "Eklemek için tıkla" : "Click to add")}
+                      >
+                        <span className="devlog-tag-badge__dot" />
+                        <span>{tagName}</span>
+                        {isActive && <span style={{ fontSize: "10px", fontWeight: "bold" }}>✓</span>}
+                        <button
+                          type="button"
+                          className="tag-modal__chip-del"
+                          title={lang === "tr" ? "Etiketi Projeden Sil" : "Delete Tag From Project"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteProjectTag(tagName);
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    );
+                  })
+              )}
+            </div>
+
+            {/* Create new tag row */}
+            <div className="tag-modal__create">
+              <div style={{ fontSize: "11px", color: "var(--text-dim)", fontWeight: 500 }}>
+                {t("addTag")}
+              </div>
+
+              {/* Color swatches */}
+              <div className="tag-modal__colors">
+                {TAG_PALETTE.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className={`tag-color-swatch ${newTagColor === color ? "tag-color-swatch--selected" : ""}`}
+                    style={{ backgroundColor: color }}
+                    onClick={() => setNewTagColor(color)}
+                    title={color}
+                  />
+                ))}
+              </div>
+
+              <div className="tag-modal__create-row">
+                <input
+                  type="text"
+                  className="tag-modal__input"
+                  placeholder={t("newTagPlaceholder")}
+                  value={newTagName}
+                  onChange={(e) => setNewTagName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleCreateNewTag(tagModalEntry);
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="tag-modal__btn"
+                  onClick={() => handleCreateNewTag(tagModalEntry)}
+                  disabled={!newTagName.trim()}
+                >
+                  {t("createTagBtn")}
+                </button>
+              </div>
             </div>
           </div>
         </div>

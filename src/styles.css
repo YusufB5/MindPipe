@@ -3359,4 +3359,372 @@ body.is-reordering-cards * {
   transform: translateY(-1px);
 }
 
+/* ==========================================================================
+   GitHub-style Tags & Custom Context Menu
+   ========================================================================== */
 
+.devlog-item__tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.devlog-tag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1.5px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--tag-color, var(--spine));
+  background-color: color-mix(in srgb, var(--tag-color, var(--spine)) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag-color, var(--spine)) 32%, transparent);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.devlog-tag-badge:hover {
+  background-color: color-mix(in srgb, var(--tag-color, var(--spine)) 24%, transparent);
+  border-color: color-mix(in srgb, var(--tag-color, var(--spine)) 50%, transparent);
+  transform: translateY(-0.5px);
+}
+
+.devlog-tag-badge--removable:hover {
+  background-color: color-mix(in srgb, #ef4444 20%, transparent);
+  border-color: color-mix(in srgb, #ef4444 55%, transparent);
+  color: #ef4444;
+}
+
+.devlog-tag-badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--tag-color, var(--spine));
+  flex-shrink: 0;
+  transition: background-color 0.15s ease;
+}
+
+.devlog-tag-badge--removable:hover .devlog-tag-badge__dot {
+  background-color: #ef4444;
+}
+
+.devlog-tag-badge__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.55;
+  margin-left: 2px;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.devlog-tag-badge:hover .devlog-tag-badge__close {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+.devlog-tag-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px dashed var(--border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  opacity: 0.65;
+}
+
+.devlog-item:hover .devlog-tag-add-btn {
+  opacity: 1;
+}
+
+.devlog-tag-add-btn:hover {
+  color: var(--text);
+  border-color: var(--spine);
+  background: var(--surface-hover);
+}
+
+/* Tag Filter Bar */
+.devlog-tag-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 7px 10px;
+  margin-bottom: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.devlog-tag-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.devlog-tag-filter-pill:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+  background: var(--surface-hover);
+}
+
+.devlog-tag-filter-pill--active {
+  color: var(--tag-color, var(--spine));
+  background-color: color-mix(in srgb, var(--tag-color, var(--spine)) 16%, transparent);
+  border-color: color-mix(in srgb, var(--tag-color, var(--spine)) 45%, transparent);
+  font-weight: 600;
+}
+
+.devlog-tag-filter-pill__count {
+  font-size: 9.5px;
+  opacity: 0.75;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+@keyframes tagModalFadeIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Tag Picker Modal */
+.tag-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(0, 0, 0, 0.58);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+  animation: tagModalFadeIn 0.12s ease-out;
+}
+
+.tag-modal {
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+}
+
+.tag-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.tag-modal__title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tag-modal__close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.tag-modal__close:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.tag-modal__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.tag-modal__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3.5px 9px;
+  border-radius: 12px;
+  font-size: 11.5px;
+  color: var(--tag-color, var(--text));
+  background: color-mix(in srgb, var(--tag-color, var(--spine)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag-color, var(--spine)) 30%, transparent);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.tag-modal__chip--active {
+  background: color-mix(in srgb, var(--tag-color, var(--spine)) 26%, transparent);
+  border-color: var(--tag-color, var(--spine));
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--tag-color, var(--spine));
+}
+
+.tag-modal__chip-del {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.tag-modal__chip-del:hover {
+  color: #ef4444;
+}
+
+.tag-modal__create {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.tag-modal__colors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.tag-color-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.tag-color-swatch:hover {
+  transform: scale(1.15);
+}
+
+.tag-color-swatch--selected {
+  border-color: var(--text);
+  transform: scale(1.22);
+}
+
+.tag-modal__create-row {
+  display: flex;
+  gap: 6px;
+}
+
+.tag-modal__input {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-card);
+  color: var(--text);
+}
+
+.tag-modal__input:focus {
+  outline: none;
+  border-color: var(--spine);
+}
+
+.tag-modal__btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--spine-dim);
+  background: var(--spine);
+  color: var(--bg);
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+
+.tag-modal__btn:hover {
+  opacity: 0.9;
+}
+
+
+
+/* Tag layout hardening: many/long tags must wrap instead of pushing the action toolbar */
+.devlog-item__header {
+  align-items: flex-start;
+}
+
+.devlog-item__meta {
+  flex: 1;
+  min-width: 0;
+  row-gap: 6px;
+}
+
+.devlog-item__actions {
+  flex-shrink: 0;
+}
+
+.devlog-item__tags {
+  min-width: 0;
+  max-width: 100%;
+  row-gap: 4px;
+}
+
+.devlog-tag-badge,
+.devlog-tag-filter-pill {
+  max-width: 180px;
+}
+
+.devlog-tag-badge > span:not(.devlog-tag-badge__dot),
+.devlog-tag-filter-pill > span:not(.devlog-tag-badge__dot):not(.devlog-tag-filter-pill__count),
+.tag-modal__chip > span:not(.devlog-tag-badge__dot) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-modal {
+  margin: 0 16px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.tag-modal__colors {
+  flex-wrap: wrap;
+}
+
+/* Reordering is disabled while a tag filter is active */
+.devlog-stream--filtered .devlog-item__drag-handle {
+  visibility: hidden;
+  pointer-events: none;
+}
