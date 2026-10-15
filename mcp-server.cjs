@@ -371,7 +371,7 @@ function setNotePinned(projectName, noteName, pinned) {
   return { success: true, file, project: clean, pinned: want };
 }
 
-function getProjectContext(projectName, tagFilter, maxTokens) {
+function getProjectContext(projectName, tagFilter) {
   const clean = sanitizeName(projectName);
   if (!isProjectAllowed(clean)) {
     throw new Error(`"${clean}" projesine erişim izni bulunmuyor (İzole proje politikası).`);
@@ -406,8 +406,7 @@ function getProjectContext(projectName, tagFilter, maxTokens) {
       if (wantedTag && !tags.some((t) => t.toLowerCase() === wantedTag)) continue;
       const content = fs.readFileSync(fullPath, "utf-8");
       const isPinned = pinnedIds.some((p) => f.startsWith(p));
-      const mtime = fs.statSync(fullPath).mtimeMs;
-      notes.push({ file: f, content: content.trim(), isPinned, tags, mtime });
+      notes.push({ file: f, content: content.trim(), isPinned, tags });
     } else if (f.endsWith(".png") && !wantedTag) {
       images.push(f);
     }
@@ -439,44 +438,33 @@ function getProjectContext(projectName, tagFilter, maxTokens) {
     output += `\n---\n\n`;
   }
 
-  // Optional token budget (~4 chars/token). Pinned notes go first, then newest notes;
-  // whatever does not fit is listed as title + summary only.
-  const budget = Number(maxTokens) > 0 ? Number(maxTokens) * 4 : Infinity;
-  const omitted = [];
-  const fits = (n, section) => {
-    const cost = n.file.length + n.content.length + 20;
-    if (output.length + section.length + cost > budget) return false;
-    return true;
-  };
-
-  const pinnedNotes = notes.filter((n) => n.isPinned).sort((a, b) => b.mtime - a.mtime);
+  const pinnedNotes = notes.filter((n) => n.isPinned);
   if (pinnedNotes.length > 0) {
-    let section = `## 📌 Sabitlenmiş Önemli Notlar & Kurallar\n\n`;
+    output += `## 📌 Sabitlenmiş Önemli Notlar & Kurallar
+
+`;
     pinnedNotes.forEach((n) => {
-      if (fits(n, section)) section += `### ${n.file}${tagSuffix(n.tags)}\n${n.content}\n\n`;
-      else omitted.push(n);
+      output += `### ${n.file}${tagSuffix(n.tags)}
+${n.content}
+
+`;
     });
-    output += section + `---\n\n`;
+    output += `---
+
+`;
   }
 
   const regularNotes = notes.filter((n) => !n.isPinned);
-  if (isFinite(budget)) regularNotes.sort((a, b) => b.mtime - a.mtime);
   if (regularNotes.length > 0) {
-    let section = `## 📝 Notlar ve Kayıtlar\n\n`;
-    regularNotes.forEach((n) => {
-      if (fits(n, section)) section += `### ${n.file}${tagSuffix(n.tags)}\n${n.content}\n\n`;
-      else omitted.push(n);
-    });
-    output += section;
-  }
+    output += `## 📝 Notlar ve Kayıtlar
 
-  if (omitted.length > 0) {
-    output += `\n## ✂️ Token bütçesine sığmayan notlar (${omitted.length})\n`;
-    output += `Tam içerik için notes_read_note kullan.\n`;
-    omitted.forEach((n) => {
-      output += `- ${n.file}${tagSuffix(n.tags)} — ${noteTitle(n.content)}: ${noteSummary(n.content)}\n`;
+`;
+    regularNotes.forEach((n) => {
+      output += `### ${n.file}${tagSuffix(n.tags)}
+${n.content}
+
+`;
     });
-    output += `\n`;
   }
 
   if (images.length > 0) {
@@ -774,7 +762,7 @@ const TOOLS = [
       properties: {
         project: { type: "string", description: "Proje adı (örneğin: 'ASCILINE', 'inbox')" },
         tag: { type: "string", description: "İsteğe bağlı: yalnızca bu etiketi taşıyan notları getir" },
-        max_tokens: { type: "number", description: "İsteğe bağlı yaklaşık token bütçesi. Sabitli ve en yeni notlar önce gelir; sığmayanlar yalnızca başlık+özet olarak listelenir." },
+
       },
       required: ["project"],
     },
@@ -1012,7 +1000,7 @@ function logMcpActivity(toolName, project, details) {
         logMcpActivity("notes_list_projects", "Tüm Projeler", "Projeleri listeledi");
         respond({ content: [{ type: "text", text: JSON.stringify(list, null, 2) }] });
       } else if (name === "notes_get_project_context") {
-        const context = getProjectContext(args.project, args.tag, args.max_tokens);
+        const context = getProjectContext(args.project, args.tag);
         logMcpActivity("notes_get_project_context", args.project, args.tag ? `Notları okudu (etiket: ${args.tag})` : "Notları ve görevleri okudu");
         respond({ content: [{ type: "text", text: context }] });
       } else if (name === "notes_list_notes") {
