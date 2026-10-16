@@ -30,6 +30,13 @@ import {
   setProjectPermissionOverride,
   setEntryParent,
   noteModified,
+  exportProject,
+  inspectBundle,
+  importBundle,
+  revealInFolder,
+  type ExportResult,
+  type InspectResult,
+  type ImportResult,
   emptyTrash,
   getTrashSettings,
   setTrashSettings,
@@ -157,6 +164,13 @@ export default function Dashboard() {
   // AI permission overrides + trash state
   const [overridePending, setOverridePending] = useState<string[]>([]);
   const [trashOpen, setTrashOpen] = useState(false);
+
+  // Share / import between devices
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareExport, setShareExport] = useState<ExportResult | null>(null);
+  const [shareImport, setShareImport] = useState<{ data: string; info: InspectResult } | null>(null);
+  const [shareResult, setShareResult] = useState<ImportResult | null>(null);
+  const [shareBusy, setShareBusy] = useState(false);
   const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
   const [trashSettings, setTrashSettingsState] = useState<TrashSettings>({ enabled: false, days: 30, maxItems: 100 });
 
@@ -392,11 +406,71 @@ export default function Dashboard() {
       ["Alt notları olan", "errHasChildren"],
       ["başka bir işlem tarafından", "errProjectBusy"],
       ["Çöp kutusunda bulunamadı", "errNotInTrash"],
+      ["daha yeni bir MindPipe", "errBundleNewer"],
+      ["Paket bozuk", "errBundleCorrupt"],
+      ["Geçersiz paket", "errBundleInvalid"],
     ];
     for (const [needle, key] of known) {
       if (msg.includes(needle)) return t(key as Parameters<typeof t>[0]) as string;
     }
     return msg;
+  }
+
+  function openShare() {
+    setShareOpen(true);
+    setShareExport(null);
+    setShareImport(null);
+    setShareResult(null);
+  }
+
+  async function handleExportProject() {
+    setShareBusy(true);
+    try {
+      setShareExport(await exportProject(active));
+    } catch (err) {
+      alert(errorText(err));
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function handlePickBundle(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setShareBusy(true);
+    setShareResult(null);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      const data = btoa(binary);
+      setShareImport({ data, info: await inspectBundle(data) });
+    } catch (err) {
+      setShareImport(null);
+      alert(errorText(err));
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function handleRunImport(mode: "merge" | "new", target?: string) {
+    if (!shareImport) return;
+    setShareBusy(true);
+    try {
+      const result = await importBundle(shareImport.data, mode, target);
+      setShareResult(result);
+      setShareImport(null);
+      await refreshProjects();
+      setActive(result.project);
+    } catch (err) {
+      alert(errorText(err));
+    } finally {
+      setShareBusy(false);
+    }
   }
 
   async function openTrash() {
@@ -1490,6 +1564,21 @@ export default function Dashboard() {
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                   </svg>
                 )}
+              </button>
+
+              {/* Share / Import Icon Button */}
+              <button
+                type="button"
+                className="dashboard__icon-btn"
+                onClick={openShare}
+                title={t("shareBtn")}
+                aria-label={t("shareBtn")}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                  <polyline points="16 6 12 2 8 6" />
+                  <line x1="12" y1="2" x2="12" y2="15" />
+                </svg>
               </button>
 
               {/* AI Trash Icon Button */}
@@ -3171,6 +3260,90 @@ export default function Dashboard() {
       )}
 
 
+
+      {/* Share / Import Modal */}
+      {shareOpen && (
+        <div className="tag-modal-overlay" onClick={() => setShareOpen(false)}>
+          <div className="tag-modal share-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="tag-modal__header">
+              <div className="tag-modal__title">
+                <span>{t("shareTitle")}</span>
+              </div>
+              <button type="button" className="tag-modal__close" onClick={() => setShareOpen(false)}>✕</button>
+            </div>
+
+            <section className="share-modal__section">
+              <h4 className="share-modal__heading">{t("shareExportTitle")} · {active}</h4>
+              <p className="share-modal__desc">{t("shareExportDesc")}</p>
+              <button type="button" className="tag-modal__btn" disabled={shareBusy} onClick={handleExportProject}>
+                {t("shareExportBtn")}
+              </button>
+              {shareExport && (
+                <div className="share-modal__result">
+                  <span>{t("shareExported")(shareExport.fileCount)}</span>
+                  <code className="share-modal__path">{shareExport.path}</code>
+                  <button type="button" className="share-modal__link" onClick={() => revealInFolder(shareExport.path).catch(() => {})}>
+                    {t("shareReveal")}
+                  </button>
+                </div>
+              )}
+            </section>
+
+            <section className="share-modal__section">
+              <h4 className="share-modal__heading">{t("shareImportTitle")}</h4>
+              <p className="share-modal__desc">{t("shareImportDesc")}</p>
+              <label className="tag-modal__btn share-modal__file">
+                {t("shareChoose")}
+                <input type="file" accept=".mindpipe" hidden disabled={shareBusy} onChange={handlePickBundle} />
+              </label>
+
+              {shareImport && (
+                <div className="share-modal__result">
+                  <span>{t("shareFileInfo")(shareImport.info.projectName, shareImport.info.fileCount)}</span>
+                  <span>
+                    {shareImport.info.matchById
+                      ? t("shareMatchById")(shareImport.info.matchById)
+                      : shareImport.info.matchByName
+                      ? t("shareMatchByName")(shareImport.info.matchByName)
+                      : t("shareNoMatch")}
+                  </span>
+                  <div className="share-modal__choices">
+                    {(shareImport.info.matchById || shareImport.info.matchByName) && (
+                      <button
+                        type="button"
+                        className="tag-modal__btn"
+                        disabled={shareBusy}
+                        onClick={() => handleRunImport("merge", (shareImport.info.matchById || shareImport.info.matchByName) as string)}
+                      >
+                        {t("shareMergeInto")((shareImport.info.matchById || shareImport.info.matchByName) as string)}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={shareImport.info.matchById || shareImport.info.matchByName ? "share-modal__secondary" : "tag-modal__btn"}
+                      disabled={shareBusy}
+                      onClick={() => handleRunImport("new")}
+                    >
+                      {t("shareAsNew")}
+                    </button>
+                    <button type="button" className="share-modal__secondary" onClick={() => setShareImport(null)}>
+                      {t("cancel")}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {shareResult && (
+                <div className="share-modal__result">
+                  <strong>{shareResult.project}</strong>
+                  <span>{t("shareDone")(shareResult.summary)}</span>
+                  {shareResult.summary.conflicts > 0 && <span>{t("shareConflictHint")}</span>}
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+      )}
 
       {/* AI Trash Modal */}
       {trashOpen && (

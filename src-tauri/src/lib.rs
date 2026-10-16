@@ -10,6 +10,8 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 
+mod bundle;
+
 const CAPTURE_SHORTCUT: &str = "Ctrl+Shift+N";
 const EMBEDDED_MCP_SERVER: &str = include_str!("../../mcp-server.cjs");
 
@@ -2054,6 +2056,10 @@ pub fn run() {
             set_project_permission_override,
             set_entry_parent,
             note_modified,
+            bundle::export_project,
+            bundle::inspect_bundle,
+            bundle::import_bundle,
+            bundle::reveal_in_folder,
             list_trash,
             empty_trash,
             get_trash_settings,

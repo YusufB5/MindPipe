@@ -311,3 +311,49 @@ export function getTrashSettings(): Promise<TrashSettings> {
 export function setTrashSettings(enabled: boolean, days: number, maxItems: number): Promise<TrashSettings> {
   return invoke("set_trash_settings", { enabled, days, maxItems });
 }
+
+export interface ExportResult {
+  path: string;
+  fileCount: number;
+}
+
+export interface InspectResult {
+  projectName: string;
+  fileCount: number;
+  exportedAt: number;
+  /** Local project that is the same project (shared earlier) */
+  matchById: string | null;
+  /** Local project with the same name but another identity */
+  matchByName: string | null;
+}
+
+export interface MergeSummary {
+  added: number;
+  updated: number;
+  conflicts: number;
+  skipped: number;
+}
+
+export interface ImportResult {
+  project: string;
+  summary: MergeSummary;
+}
+
+/** Exports a project as a single .mindpipe file (saved to the Downloads folder). */
+export function exportProject(project: string): Promise<ExportResult> {
+  return invoke("export_project", { project });
+}
+
+/** Reads a .mindpipe file (base64) and reports which local project it belongs to. */
+export function inspectBundle(dataB64: string): Promise<InspectResult> {
+  return invoke("inspect_bundle", { dataB64 });
+}
+
+/** Imports a bundle: mode "merge" into `target`, or "new" as a new project. Never overwrites. */
+export function importBundle(dataB64: string, mode: "merge" | "new", target?: string): Promise<ImportResult> {
+  return invoke("import_bundle", { dataB64, mode, target: target ?? null });
+}
+
+export function revealInFolder(path: string): Promise<void> {
+  return invoke("reveal_in_folder", { path });
+}
