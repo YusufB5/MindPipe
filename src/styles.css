@@ -4063,3 +4063,75 @@ body.is-reordering-cards * {
   font-size: 10.5px;
   padding: 1px 7px;
 }
+
+/* Pinned notes: icon-only badge */
+.devlog-item__pinned-badge {
+  padding: 3px 5px;
+  line-height: 0;
+}
+
+/* Tag filter: parent of a matching sub-note, shown as quiet context */
+/* Only the parent's own header/body are dimmed: opacity on the card would also dim the matching sub-notes */
+.devlog-item--context > .devlog-item__header,
+.devlog-item--context > .devlog-item__body {
+  opacity: 0.5;
+}
+
+.devlog-item--context .devlog-item__content {
+  max-height: 3.4em;
+  overflow: hidden;
+}
+
+.devlog-item--context > .devlog-item__divider,
+.devlog-item--context .devlog-item__actions {
+  display: none;
+}
+
+/* Trash modal: empty button + auto-clean settings */
+.trash-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.trash-modal__purge:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.trash-modal__auto {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.trash-modal__auto summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.trash-modal__auto-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.trash-modal__num {
+  width: 64px;
+  padding: 4px 6px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-card);
+  color: var(--text);
+}
+
+.trash-modal__auto-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}

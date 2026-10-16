@@ -30,6 +30,10 @@ import {
   setProjectPermissionOverride,
   setEntryParent,
   noteModified,
+  emptyTrash,
+  getTrashSettings,
+  setTrashSettings,
+  type TrashSettings,
   clearProjectPermissionOverride,
   listTrash,
   restoreTrashItem,
@@ -154,6 +158,7 @@ export default function Dashboard() {
   const [overridePending, setOverridePending] = useState<string[]>([]);
   const [trashOpen, setTrashOpen] = useState(false);
   const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
+  const [trashSettings, setTrashSettingsState] = useState<TrashSettings>({ enabled: false, days: 30, maxItems: 100 });
 
   // Tagging state
   const [projectTags, setProjectTags] = useState<Record<string, string>>({});
@@ -378,9 +383,47 @@ export default function Dashboard() {
     }
   }
 
+  // Backend errors are written in Turkish; show the known ones in the UI language.
+  function errorText(err: unknown): string {
+    const msg = String(err);
+    const known: [string, string][] = [
+      ["kendi alt notu", "errSelfParent"],
+      ["zaten bir alt not", "errParentIsChild"],
+      ["Alt notları olan", "errHasChildren"],
+      ["başka bir işlem tarafından", "errProjectBusy"],
+      ["Çöp kutusunda bulunamadı", "errNotInTrash"],
+    ];
+    for (const [needle, key] of known) {
+      if (msg.includes(needle)) return t(key as Parameters<typeof t>[0]) as string;
+    }
+    return msg;
+  }
+
   async function openTrash() {
     setTrashOpen(true);
     await refreshTrash();
+    getTrashSettings().then(setTrashSettingsState).catch(() => {});
+  }
+
+  async function handleEmptyTrash() {
+    if (trashItems.length === 0) return;
+    if (!window.confirm(t("trashEmptyConfirm")(trashItems.length))) return;
+    try {
+      await emptyTrash(active);
+      await refreshTrash();
+    } catch (err) {
+      alert(errorText(err));
+    }
+  }
+
+  async function handleSaveTrashSettings(next: TrashSettings) {
+    setTrashSettingsState(next);
+    try {
+      setTrashSettingsState(await setTrashSettings(next.enabled, next.days, next.maxItems));
+      await refreshTrash();
+    } catch (err) {
+      alert(errorText(err));
+    }
   }
 
   async function handleRestoreTrash(file: string) {
@@ -389,7 +432,7 @@ export default function Dashboard() {
       await refreshTrash();
       refreshEntries(active, true);
     } catch (err) {
-      alert(String(err));
+      alert(errorText(err));
     }
   }
 
@@ -399,7 +442,7 @@ export default function Dashboard() {
       await purgeTrashItem(active, file);
       await refreshTrash();
     } catch (err) {
-      alert(String(err));
+      alert(errorText(err));
     }
   }
 
@@ -845,7 +888,7 @@ export default function Dashboard() {
                   setExpandedParents((prev) => ({ ...prev, [targetId]: true }));
                   return refreshEntries(active, true);
                 })
-                .catch((err) => alert(String(err)));
+                .catch((err) => alert(errorText(err)));
             } else if (srcIdx !== null && targetIdx !== null && srcIdx !== targetIdx) {
               const updatedRoots = [...roots];
               const [removed] = updatedRoots.splice(srcIdx, 1);
@@ -1101,7 +1144,7 @@ export default function Dashboard() {
         const after = await listEntries(active);
         const created = after.find((en) => !knownIds.has(en.id));
         if (created) {
-          await setEntryParent(active, created.id, parentId).catch((err) => alert(String(err)));
+          await setEntryParent(active, created.id, parentId).catch((err) => alert(errorText(err)));
           setExpandedParents((prev) => ({ ...prev, [parentId]: true }));
         }
       }
@@ -1829,10 +1872,14 @@ export default function Dashboard() {
                       className={`devlog-stream ${selectedTagFilter ? "devlog-stream--filtered" : ""} ${pointerDragIndex !== null ? "devlog-stream--dragging-active entries-list--dragging-active" : ""}`}
                     >
                       {(() => {
+                        // While a tag filter is active the hierarchy stays visible: a matching
+                        // sub-note is shown under its parent, which is dimmed when it does not match itself.
                         const flatMode = Boolean(selectedTagFilter);
+                        const tagMatches = (e: EntryMeta) => Boolean(selectedTagFilter && e.tags?.includes(selectedTagFilter));
                         const renderCard = (entry: EntryMeta, idx: number, isChild: boolean): React.ReactNode => {
-                        const childList = isChild || flatMode ? [] : entries.filter((e) => e.parentId === entry.id);
+                        const childList = isChild ? [] : entries.filter((e) => e.parentId === entry.id && (!flatMode || tagMatches(e)));
                         const isNestTarget = !isChild && pointerNestIndex === idx;
+                        const isContext = flatMode && !isChild && !tagMatches(entry);
                         const tagAddButton = (
                           <button
                             type="button"
@@ -1865,7 +1912,7 @@ export default function Dashboard() {
                           <article
                             key={entry.id || entry.path}
                             data-index={isChild ? undefined : idx}
-                            className={`devlog-item ${isChild ? "devlog-item--child" : ""} ${isNestTarget ? "devlog-item--nest-target" : ""} ${entry.pinned ? "devlog-item--pinned" : ""} ${isDragging ? "devlog-item--dragging" : ""} ${dropDirection ? `devlog-item--drop-target-${dropDirection}` : ""}`}
+                            className={`devlog-item ${isChild ? "devlog-item--child" : ""} ${isContext ? "devlog-item--context" : ""} ${isNestTarget ? "devlog-item--nest-target" : ""} ${entry.pinned ? "devlog-item--pinned" : ""} ${isDragging ? "devlog-item--dragging" : ""} ${dropDirection ? `devlog-item--drop-target-${dropDirection}` : ""}`}
                             onPointerDown={isChild ? undefined : (e) => handleStartCardDrag(e, idx)}
                           >
                             {/* DevLog Item Header */}
@@ -1880,7 +1927,7 @@ export default function Dashboard() {
                                   </div>
                                 )}
 
-                                {childList.length > 0 && (
+                                {childList.length > 0 && !flatMode && (
                                   <button
                                     type="button"
                                     className="devlog-children-toggle"
@@ -1912,7 +1959,6 @@ export default function Dashboard() {
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                                       <path d="M16 3H8v2h1v5l-2 3v2h5v6l1 1 1-1v-6h5v-2l-2-3V5h1V3z" />
                                     </svg>
-                                    <span>{t("pinnedBadge")}</span>
                                   </div>
                                 )}
 
@@ -1978,7 +2024,7 @@ export default function Dashboard() {
                                   e.stopPropagation();
                                   setEntryParent(active, entry.id, null)
                                     .then(() => refreshEntries(active, true))
-                                    .catch((err) => alert(String(err)));
+                                    .catch((err) => alert(errorText(err)));
                                 }}
                               >
                                 {t("detachNote")}
@@ -2189,7 +2235,7 @@ export default function Dashboard() {
 
                         {isNestTarget && <div className="devlog-nest-hint">↳ {t("nestHint")}</div>}
 
-                        {childList.length > 0 && expandedParents[entry.id] && (
+                        {childList.length > 0 && (flatMode || expandedParents[entry.id]) && (
                           <div className="devlog-children">
                             {childList.map((child) => renderCard(child, -1, true))}
                           </div>
@@ -2198,7 +2244,7 @@ export default function Dashboard() {
                     );
                         };
                         const list = flatMode
-                          ? entries.filter((e) => e.tags?.includes(selectedTagFilter as string))
+                          ? rootEntries.filter((r) => tagMatches(r) || entries.some((c) => c.parentId === r.id && tagMatches(c)))
                           : rootEntries;
                         return list.map((entry, idx) => renderCard(entry, idx, false));
                       })()}
@@ -3159,6 +3205,53 @@ export default function Dashboard() {
                 ))}
               </div>
             )}
+
+            <div className="trash-modal__footer">
+              <button
+                type="button"
+                className="trash-modal__purge"
+                disabled={trashItems.length === 0}
+                onClick={handleEmptyTrash}
+              >
+                {t("trashEmptyBtn")}
+              </button>
+            </div>
+
+            <details className="trash-modal__auto">
+              <summary>{t("trashAutoTitle")}{trashSettings.enabled ? " ✓" : ""}</summary>
+              <label className="trash-modal__auto-row">
+                <input
+                  type="checkbox"
+                  checked={trashSettings.enabled}
+                  onChange={(e) => handleSaveTrashSettings({ ...trashSettings, enabled: e.target.checked })}
+                />
+                <span>{t("trashAutoEnable")}</span>
+              </label>
+              <div className="trash-modal__auto-row">
+                <input
+                  type="number"
+                  min={1}
+                  className="trash-modal__num"
+                  defaultValue={trashSettings.days}
+                  key={`d${trashSettings.days}`}
+                  onBlur={(e) => handleSaveTrashSettings({ ...trashSettings, days: Math.max(1, Number(e.target.value) || 1) })}
+                />
+                <span>{t("trashAutoDaysLabel")}</span>
+              </div>
+              <div className="trash-modal__auto-row">
+                <span>{t("trashAutoMaxLabel")}</span>
+                <input
+                  type="number"
+                  min={1}
+                  className="trash-modal__num"
+                  defaultValue={trashSettings.maxItems}
+                  key={`m${trashSettings.maxItems}`}
+                  onBlur={(e) => handleSaveTrashSettings({ ...trashSettings, maxItems: Math.max(1, Number(e.target.value) || 1) })}
+                />
+                <span>{t("trashAutoNotesLabel")}</span>
+              </div>
+              <p className="trash-modal__auto-hint">{t("trashAutoHint")}</p>
+            </details>
           </div>
         </div>
       )}

@@ -559,6 +559,158 @@ fn set_entry_parent(
     Ok(())
 }
 
+/// App-wide automatic trash cleanup policy (`trash-settings.json`). Off by default.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct TrashSettings {
+    #[serde(default)]
+    enabled: bool,
+    /// Items deleted more than this many days ago are removed.
+    #[serde(default = "default_trash_days")]
+    days: u32,
+    /// Per project: when more items remain, the oldest ones are removed.
+    #[serde(default = "default_trash_max")]
+    max_items: u32,
+}
+
+fn default_trash_days() -> u32 {
+    30
+}
+
+fn default_trash_max() -> u32 {
+    100
+}
+
+impl Default for TrashSettings {
+    fn default() -> Self {
+        TrashSettings { enabled: false, days: 30, max_items: 100 }
+    }
+}
+
+fn trash_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let root = projects_root(app)?;
+    Ok(root.parent().unwrap_or(&root).join("trash-settings.json"))
+}
+
+fn load_trash_settings(app: &AppHandle) -> TrashSettings {
+    trash_settings_path(app)
+        .ok()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .and_then(|c| serde_json::from_str::<TrashSettings>(&c).ok())
+        .unwrap_or_default()
+}
+
+/// Removes expired / surplus items from every project's `.trash`. Returns how many were removed.
+fn run_trash_policy(root: &PathBuf, settings: &TrashSettings) -> usize {
+    if !settings.enabled {
+        return 0;
+    }
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let max_age_ms = settings.days as u64 * 24 * 60 * 60 * 1000;
+    let mut removed_total = 0usize;
+
+    let Ok(projects) = fs::read_dir(root) else { return 0 };
+    for project in projects.flatten() {
+        let dir = project.path();
+        let trash = dir.join(".trash");
+        if !dir.is_dir() || !trash.is_dir() {
+            continue;
+        }
+        let Ok(_lock) = lock_dir(&dir) else { continue };
+        let mut meta = read_trash_meta(&trash);
+
+        let mut items: Vec<(String, u64)> = fs::read_dir(&trash)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .filter_map(|e| {
+                let file = e.file_name().to_string_lossy().to_string();
+                if file.starts_with('.') {
+                    return None;
+                }
+                let at = meta
+                    .get(&file)
+                    .map(|m| m.deleted_at)
+                    .filter(|t| *t > 0)
+                    .unwrap_or_else(|| file_modified_ms(&e.path()));
+                Some((file, at))
+            })
+            .collect();
+        items.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
+
+        let mut doomed: Vec<String> = Vec::new();
+        for (idx, (file, at)) in items.iter().enumerate() {
+            let expired = now_ms.saturating_sub(*at) > max_age_ms;
+            let surplus = idx >= settings.max_items as usize;
+            if expired || surplus {
+                doomed.push(file.clone());
+            }
+        }
+        for file in &doomed {
+            if fs::remove_file(trash.join(file)).is_ok() {
+                meta.remove(file);
+                removed_total += 1;
+            }
+        }
+        if !doomed.is_empty() {
+            let _ = write_trash_meta(&trash, &meta);
+        }
+    }
+    removed_total
+}
+
+#[tauri::command]
+fn get_trash_settings(app: AppHandle) -> TrashSettings {
+    load_trash_settings(&app)
+}
+
+#[tauri::command]
+fn set_trash_settings(
+    app: AppHandle,
+    enabled: bool,
+    days: u32,
+    max_items: u32,
+) -> Result<TrashSettings, String> {
+    let settings = TrashSettings {
+        enabled,
+        days: days.clamp(1, 3650),
+        max_items: max_items.clamp(1, 100_000),
+    };
+    let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    atomic_write(&trash_settings_path(&app)?, json.as_bytes())?;
+    let root = projects_root(&app)?;
+    run_trash_policy(&root, &settings);
+    let _ = app.emit("notes-updated", ());
+    Ok(settings)
+}
+
+/// Permanently removes everything in one project's trash.
+#[tauri::command]
+fn empty_trash(app: AppHandle, project: String) -> Result<usize, String> {
+    let (dir, trash) = trash_dir(&app, &project)?;
+    if !trash.exists() {
+        return Ok(0);
+    }
+    let _lock = lock_dir(&dir)?;
+    let mut removed = 0usize;
+    for entry in fs::read_dir(&trash).map_err(|e| e.to_string())?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || !entry.path().is_file() {
+            continue;
+        }
+        if fs::remove_file(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    let _ = fs::remove_file(trash.join(".meta.json"));
+    let _ = app.emit("notes-updated", ());
+    Ok(removed)
+}
+
 /// Per-project tag data stored in `.tags.json`: tag name -> hex color,
 /// and note id -> list of tag names.
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -1801,6 +1953,23 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Trash cleanup: runs the user's auto-clean policy shortly after start and then hourly.
+            let trash_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(8));
+                loop {
+                    let settings = load_trash_settings(&trash_handle);
+                    if settings.enabled {
+                        if let Ok(root) = projects_root(&trash_handle) {
+                            if run_trash_policy(&root, &settings) > 0 {
+                                let _ = trash_handle.emit("notes-updated", ());
+                            }
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(60 * 60));
+                }
+            });
+
             // Background Live Watcher: detects external MCP or file changes in real-time
             let sync_handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -1886,6 +2055,9 @@ pub fn run() {
             set_entry_parent,
             note_modified,
             list_trash,
+            empty_trash,
+            get_trash_settings,
+            set_trash_settings,
             restore_trash_item,
             purge_trash_item,
             clear_project_permission_override,
@@ -1897,3 +2069,93 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+#[cfg(test)]
+mod trash_policy_tests {
+    use super::*;
+
+    const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+
+    fn now_ms() -> u64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
+    }
+
+    fn setup(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("mindpipe_trash_{}_{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("p1").join(".trash")).unwrap();
+        root
+    }
+
+    fn add(root: &PathBuf, file: &str, age_days: u64, meta: &mut HashMap<String, TrashMeta>) {
+        fs::write(root.join("p1").join(".trash").join(file), "x").unwrap();
+        meta.insert(
+            file.to_string(),
+            TrashMeta {
+                original: file.to_string(),
+                tags: vec![],
+                pinned: false,
+                deleted_at: now_ms() - age_days * DAY_MS,
+                deleted_by: "ai".into(),
+            },
+        );
+    }
+
+    fn remaining(root: &PathBuf) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(root.join("p1").join(".trash"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| !n.starts_with('.'))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn disabled_policy_removes_nothing() {
+        let root = setup("off");
+        let mut meta = HashMap::new();
+        add(&root, "old.md", 400, &mut meta);
+        write_trash_meta(&root.join("p1").join(".trash"), &meta).unwrap();
+        let settings = TrashSettings { enabled: false, days: 30, max_items: 100 };
+        assert_eq!(run_trash_policy(&root, &settings), 0);
+        assert_eq!(remaining(&root), vec!["old.md"]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn removes_expired_and_keeps_recent() {
+        let root = setup("age");
+        let mut meta = HashMap::new();
+        add(&root, "old.md", 45, &mut meta);
+        add(&root, "recent.md", 3, &mut meta);
+        write_trash_meta(&root.join("p1").join(".trash"), &meta).unwrap();
+        let settings = TrashSettings { enabled: true, days: 30, max_items: 100 };
+        assert_eq!(run_trash_policy(&root, &settings), 1);
+        assert_eq!(remaining(&root), vec!["recent.md"]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn trims_to_max_items_dropping_oldest_first() {
+        let root = setup("max");
+        let mut meta = HashMap::new();
+        add(&root, "a_newest.md", 1, &mut meta);
+        add(&root, "b_mid.md", 2, &mut meta);
+        add(&root, "c_oldest.md", 3, &mut meta);
+        write_trash_meta(&root.join("p1").join(".trash"), &meta).unwrap();
+        let settings = TrashSettings { enabled: true, days: 30, max_items: 2 };
+        assert_eq!(run_trash_policy(&root, &settings), 1);
+        assert_eq!(remaining(&root), vec!["a_newest.md", "b_mid.md"]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn lock_is_released_after_cleanup() {
+        let root = setup("lock");
+        let settings = TrashSettings { enabled: true, days: 30, max_items: 100 };
+        run_trash_policy(&root, &settings);
+        assert!(!root.join("p1").join(".lock").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+}

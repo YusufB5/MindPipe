@@ -291,3 +291,23 @@ export function purgeTrashItem(project: string, file: string): Promise<void> {
 export function setEntryParent(project: string, entryId: string, parentId: string | null): Promise<void> {
   return invoke("set_entry_parent", { project, entryId, parentId });
 }
+
+export interface TrashSettings {
+  enabled: boolean;
+  days: number;
+  maxItems: number;
+}
+
+/** Permanently removes everything in a project's trash; returns how many notes were removed. */
+export function emptyTrash(project: string): Promise<number> {
+  return invoke("empty_trash", { project });
+}
+
+/** App-wide automatic trash cleanup policy. */
+export function getTrashSettings(): Promise<TrashSettings> {
+  return invoke("get_trash_settings");
+}
+
+export function setTrashSettings(enabled: boolean, days: number, maxItems: number): Promise<TrashSettings> {
+  return invoke("set_trash_settings", { enabled, days, maxItems });
+}
