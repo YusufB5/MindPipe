@@ -30,6 +30,9 @@ import {
   setProjectPermissionOverride,
   setEntryParent,
   noteModified,
+  getStartupSettings,
+  setStartupSettings,
+  type StartupStatus,
   setTrayLanguage,
   exportProject,
   inspectBundle,
@@ -165,6 +168,9 @@ export default function Dashboard() {
   // AI permission overrides + trash state
   const [overridePending, setOverridePending] = useState<string[]>([]);
   const [trashOpen, setTrashOpen] = useState(false);
+
+  // Startup (launch at login) settings
+  const [startup, setStartup] = useState<StartupStatus>({ enabled: false, startHidden: true, supported: true });
 
   // Share / import between devices
   const [shareOpen, setShareOpen] = useState(false);
@@ -412,6 +418,7 @@ export default function Dashboard() {
       ["Alt notları olan", "errHasChildren"],
       ["başka bir işlem tarafından", "errProjectBusy"],
       ["Çöp kutusunda bulunamadı", "errNotInTrash"],
+      ["yalnızca kurulu sürümde", "errStartupDev"],
       ["Hedef proje bulunamadı", "errProjectNotFound"],
       ["Proje bulunamadı", "errProjectNotFound"],
       ["Geçersiz proje adı", "errInvalidProjectName"],
@@ -426,6 +433,20 @@ export default function Dashboard() {
       if (msg.includes(needle)) return t(key as Parameters<typeof t>[0]) as string;
     }
     return msg;
+  }
+
+  useEffect(() => {
+    if (isSettingsOpen) {
+      getStartupSettings().then(setStartup).catch(() => {});
+    }
+  }, [isSettingsOpen]);
+
+  async function handleStartupChange(enabled: boolean, startHidden: boolean) {
+    try {
+      setStartup(await setStartupSettings(enabled, startHidden));
+    } catch (err) {
+      alert(errorText(err));
+    }
   }
 
   function openShare() {
@@ -3001,6 +3022,36 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Startup */}
+                  <div className="settings-group">
+                    <span className="settings-group__title">{t("startupLabel")}</span>
+                    <label className={`settings-toggle ${!startup.supported ? "settings-toggle--disabled" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={startup.enabled}
+                        disabled={!startup.supported}
+                        onChange={(e) => handleStartupChange(e.target.checked, startup.startHidden)}
+                      />
+                      <span className="settings-card__info">
+                        <span className="settings-card__title">{t("startupEnable")}</span>
+                        <span className="settings-card__desc">{t("startupEnableDesc")}</span>
+                      </span>
+                    </label>
+                    <label className={`settings-toggle ${!startup.supported || !startup.enabled ? "settings-toggle--disabled" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={startup.startHidden}
+                        disabled={!startup.supported || !startup.enabled}
+                        onChange={(e) => handleStartupChange(startup.enabled, e.target.checked)}
+                      />
+                      <span className="settings-card__info">
+                        <span className="settings-card__title">{t("startupHidden")}</span>
+                        <span className="settings-card__desc">{t("startupHiddenDesc")}</span>
+                      </span>
+                    </label>
+                    {!startup.supported && <span className="settings-card__desc">{t("startupDevOnly")}</span>}
                   </div>
 
                   {/* Theme Selection */}

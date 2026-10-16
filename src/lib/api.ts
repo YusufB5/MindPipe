@@ -362,3 +362,20 @@ export function revealInFolder(path: string): Promise<void> {
 export function setTrayLanguage(lang: string): Promise<void> {
   return invoke("set_tray_language", { lang });
 }
+
+export interface StartupStatus {
+  /** Whether the OS launches MindPipe at login */
+  enabled: boolean;
+  /** When launched at login, stay in the tray instead of opening the window */
+  startHidden: boolean;
+  /** False in development builds */
+  supported: boolean;
+}
+
+export function getStartupSettings(): Promise<StartupStatus> {
+  return invoke("get_startup_settings");
+}
+
+export function setStartupSettings(enabled: boolean, startHidden: boolean): Promise<StartupStatus> {
+  return invoke("set_startup_settings", { enabled, startHidden });
+}

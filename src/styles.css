@@ -4224,3 +4224,26 @@ body.is-reordering-cards * {
   color: var(--text);
   border-color: var(--spine);
 }
+
+/* Startup toggles in Settings */
+.settings-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.settings-toggle input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: var(--spine);
+  flex-shrink: 0;
+}
+
+.settings-toggle--disabled {
+  opacity: 0.5;
+  cursor: default;
+}

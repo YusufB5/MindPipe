@@ -19,7 +19,7 @@
         "height": 640,
         "minWidth": 640,
         "minHeight": 420,
-        "visible": true,
+        "visible": false,
         "center": true
       },
       {

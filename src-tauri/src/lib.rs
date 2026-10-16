@@ -8,6 +8,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_opener::OpenerExt;
 
 mod bundle;
@@ -579,6 +580,76 @@ fn set_entry_parent(
     save_tree_store(&dir, &store)?;
     let _ = app.emit("notes-updated", ());
     Ok(())
+}
+
+/// Startup preferences (`startup-settings.json`). Whether the OS launches the app at login is
+/// stored by the OS itself (registry / launch agent / autostart entry), not in this file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct StartupSettings {
+    /// When launched at login, stay in the tray instead of opening the window.
+    #[serde(default = "default_true")]
+    start_hidden: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for StartupSettings {
+    fn default() -> Self {
+        StartupSettings { start_hidden: true }
+    }
+}
+
+fn load_startup_settings(app_dir: &std::path::Path) -> StartupSettings {
+    fs::read_to_string(app_dir.join("startup-settings.json"))
+        .ok()
+        .and_then(|c| serde_json::from_str::<StartupSettings>(&c).ok())
+        .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StartupStatus {
+    enabled: bool,
+    start_hidden: bool,
+    /// False in development builds, where registering the dev executable would be wrong.
+    supported: bool,
+}
+
+fn startup_status(app: &AppHandle) -> Result<StartupStatus, String> {
+    let root = projects_root(app)?;
+    let app_dir = root.parent().unwrap_or(&root);
+    Ok(StartupStatus {
+        enabled: app.autolaunch().is_enabled().unwrap_or(false),
+        start_hidden: load_startup_settings(app_dir).start_hidden,
+        supported: !cfg!(debug_assertions),
+    })
+}
+
+#[tauri::command]
+fn get_startup_settings(app: AppHandle) -> Result<StartupStatus, String> {
+    startup_status(&app)
+}
+
+#[tauri::command]
+fn set_startup_settings(app: AppHandle, enabled: bool, start_hidden: bool) -> Result<StartupStatus, String> {
+    if cfg!(debug_assertions) {
+        return Err("Başlangıç ayarı yalnızca kurulu sürümde değiştirilebilir".into());
+    }
+    let root = projects_root(&app)?;
+    let app_dir = root.parent().unwrap_or(&root).to_path_buf();
+    let json = serde_json::to_string_pretty(&StartupSettings { start_hidden }).map_err(|e| e.to_string())?;
+    atomic_write(&app_dir.join("startup-settings.json"), json.as_bytes())?;
+
+    let autolaunch = app.autolaunch();
+    if enabled {
+        autolaunch.enable().map_err(|e| e.to_string())?;
+    } else if autolaunch.is_enabled().unwrap_or(false) {
+        autolaunch.disable().map_err(|e| e.to_string())?;
+    }
+    startup_status(&app)
 }
 
 /// App-wide automatic trash cleanup policy (`trash-settings.json`). Off by default.
@@ -1896,7 +1967,24 @@ fn toggle_capture_window(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Release builds only (so a dev run is never blocked by the installed tray app):
+    // a second launch focuses the running instance instead of starting another one.
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+    }));
+
+    builder
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -1913,6 +2001,17 @@ pub fn run() {
             let root = projects_root(&handle)?;
             let app_dir = root.parent().unwrap_or(&root);
             ensure_mcp_server(app_dir);
+
+            // The main window starts hidden (tauri.conf.json). Show it, unless the OS started us at
+            // login and the user chose to start quietly in the tray.
+            let launched_by_autostart = std::env::args().any(|a| a == "--autostart");
+            let stay_hidden = launched_by_autostart && load_startup_settings(app_dir).start_hidden;
+            if !stay_hidden {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
 
             // Global "capture" shortcut works even when another app is focused.
             let saved_shortcut = get_saved_capture_shortcut(app_dir);
@@ -2081,6 +2180,8 @@ pub fn run() {
             set_entry_parent,
             note_modified,
             set_tray_language,
+            get_startup_settings,
+            set_startup_settings,
             bundle::export_project,
             bundle::inspect_bundle,
             bundle::import_bundle,
@@ -2188,5 +2289,36 @@ mod trash_policy_tests {
         run_trash_policy(&root, &settings);
         assert!(!root.join("p1").join(".lock").exists());
         let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod startup_settings_tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mindpipe_startup_{}_{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn defaults_to_starting_hidden_when_no_file_exists() {
+        let dir = temp_dir("none");
+        assert!(load_startup_settings(&dir).start_hidden);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reads_the_saved_choice_and_survives_garbage() {
+        let dir = temp_dir("saved");
+        fs::write(dir.join("startup-settings.json"), r#"{"startHidden": false}"#).unwrap();
+        assert!(!load_startup_settings(&dir).start_hidden);
+        fs::write(dir.join("startup-settings.json"), "not json").unwrap();
+        assert_eq!(load_startup_settings(&dir), StartupSettings::default());
+        fs::write(dir.join("startup-settings.json"), "{}").unwrap();
+        assert!(load_startup_settings(&dir).start_hidden);
+        let _ = fs::remove_dir_all(&dir);
     }
 }
