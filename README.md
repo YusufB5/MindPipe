@@ -52,6 +52,20 @@ All data is stored directly on your local file system as plain Markdown (`.md`) 
   - Drag-and-drop manual card reordering, saved per project (`.order.json`).
   - Full-size image lightbox with multi-screenshot gallery reels.
   - Direct image pasting into the "+ Add Note" form on the dashboard.
+- **Tags & Sub-notes:**
+  - Colored per-note tags with a filter bar and a tag manager (stored in `.tags.json`).
+  - One-level note hierarchy: drop a note on the middle of another card, use `+ Sub-note`, or `Detach` to move it back. Sub-notes start collapsed and open via the counter badge or the parent's `Read more`.
+  - While filtering by tag, a matching sub-note stays visible under its (dimmed) parent.
+- **Share Between Devices (`.mindpipe` bundles):**
+  - Export a project to a single file and import it on another device; no cloud, no extra tools.
+  - Projects carry a stable identity, so an import merges into the same project instead of duplicating or overwriting it.
+  - Never loses work: if a note was edited on both sides, the other version is kept as a separate note tagged `sync-conflict`. Tags, pins and to-dos are merged as unions.
+- **AI Trash:**
+  - Notes deleted by AI agents are moved to the project's trash instead of being erased; restore them (tags and pin included) or delete them forever.
+  - One-click "Empty trash" and an optional auto-clean policy (older than N days / more than N notes), off by default.
+- **Safe Concurrent Editing:**
+  - Metadata is written atomically and guarded by a per-project lock, so the app and AI agents can work on the same project without corrupting files.
+  - Editing a note that changed in the meantime (for example by an AI agent) asks before overwriting; agents get a version check as well.
 - **Project Organization & Tasks (TODOs):**
   - Clean workspaces for your codebases, ideas, and devlogs.
   - Project task management stored in human-readable plain text (`todos.md`).
@@ -63,16 +77,18 @@ All data is stored directly on your local file system as plain Markdown (`.md`) 
   - Connects seamlessly to Claude Desktop, Cursor, Antigravity, Codex, and Windsurf.
   - Non-intrusive background file watcher providing real-time live synchronization between external AI modifications and the desktop UI.
   - Visual AI sparkle badge identifying projects, notes, and tasks created or managed by AI models.
+  - Token-friendly progressive reading: agents can list notes one line each, read a single note, filter by tag or parent, and only pull full context when needed.
 - **Granular Security Firewall & Permissions:**
   - Per-project access control: toggle AI read/write access per project with one click.
   - Permission scoping: configure AI edit and delete rights (`only_ai` created items, `all` items, or `none`).
-  - Live activity pulse and audit log feed.
+  - Per-project overrides: pick a project from a dropdown to give it different edit/delete rights than the global setting.
+  - Live activity pulse and audit log feed (in your language).
 - **6 Color Themes & Custom Scrollbars:**
   - Dark Themes: Amber Dark (Default), OLED Midnight, Emerald Forest, Slate Minimal.
   - Light Themes: Paper Light (Warm Cream & Amber), Nordic Frost (Cool Grey & Sky Blue).
   - Modern sleek custom scrollbars matching the active theme palette.
 - **Bilingual Localization:**
-  - Switch between English and Turkish in real-time from the Settings menu.
+  - Switch between English and Turkish in real-time from the Settings menu; the quick capture window, tray menu and MCP activity log follow your choice.
 
 ---
 
@@ -85,6 +101,7 @@ All data is stored directly on your local file system as plain Markdown (`.md`) 
   - Windows: `%APPDATA%\com.mindpipe.app\projects\<project>\`
   - macOS: `~/Library/Application Support/com.mindpipe.app/projects/<project>/`
   - Linux: `~/.config/com.mindpipe.app/projects/<project>/`
+- **Project folder contents:** notes (`<timestamp>.md`), screenshots (`.png`), `todos.md`, plus small plain-JSON metadata files: `.tags.json` (tags), `.tree.json` (sub-notes), `.pinned.json`, `.order.json`, `.project.json` (project identity), `.trash/` (AI-deleted notes). Everything stays human-readable.
 
 ---
 
@@ -118,6 +135,24 @@ You can copy your pre-filled, personal configuration snippet directly by opening
 command = "node"
 args = ['C:\Users\<YOUR_USERNAME>\AppData\Roaming\com.mindpipe.app\mcp-server.cjs']
 ```
+
+#### Available MCP tools
+
+| Tool | What it does |
+| :--- | :--- |
+| `notes_list_projects` | Lists the projects the agent may access |
+| `notes_get_project_context` | Full context of a project (notes, pinned rules, to-dos); optional `tag` filter |
+| `notes_list_notes` | Lightweight index, one line per note (title, summary, tags, size, date); `tag`, `parent`, `limit`, and `format: "json"` options |
+| `notes_read_note` | Reads one note in full, including its version, tags and sub-notes |
+| `notes_search` | Searches notes across projects; optional `tag` filter |
+| `notes_add_note` | Adds a note, optionally with `tags` and a `parent` (sub-note) |
+| `notes_edit_note` | Edits a note; pass `expected_version` to avoid overwriting newer changes |
+| `notes_delete_note` | Moves a note to the project's trash (restorable) |
+| `notes_set_tags` / `notes_set_parent` / `notes_pin_note` | Tag, nest or pin a note |
+| `notes_add_todo` / `notes_toggle_todo` / `notes_delete_todo` | Manage project to-dos |
+| `notes_get_image` / `notes_create_project` | Read a screenshot / create a project |
+
+Every tool respects the per-project access setting from the MCP Control Panel; edit and delete tools also follow the edit/delete permissions (global or per-project override).
 
 ---
 
@@ -190,6 +225,20 @@ Tüm veriler doğrudan yerel dosya sisteminizde düz Markdown (`.md`) ve standar
   - Sürükle-bırak ile serbest kart sıralama (proje bazında `.order.json` dosyasında saklanır).
   - Çoklu ekran alıntıları için tam ekran görsel lightbox büyütücüsü.
   - Ana pano üzerindeki "+ Not Ekle" alanında doğrudan panodan görsel yapıştırma (`Ctrl+V`).
+- **Etiketler ve Alt Notlar:**
+  - Not başına renkli etiketler, filtre çubuğu ve etiket yöneticisi (`.tags.json` dosyasında saklanır).
+  - Tek seviyeli not hiyerarşisi: bir notu başka bir kartın ortasına bırakın, `+ Alt not` kullanın ya da `Ayır` ile geri çıkarın. Alt notlar kapalı başlar, sayaç rozetiyle veya üst notun `Devamını Gör` butonuyla açılır.
+  - Etikete göre filtrelerken eşleşen alt not, (soluk görünen) üst notunun altında görünmeye devam eder.
+- **Cihazlar Arası Paylaşım (`.mindpipe` paketleri):**
+  - Bir projeyi tek dosyaya aktarıp başka cihazda içe aktarın; bulut ve ek araç gerekmez.
+  - Projeler kalıcı bir kimlik taşır; içe aktarma aynı projeyle birleşir, çoğaltmaz veya üzerine yazmaz.
+  - Hiçbir şey kaybolmaz: bir not iki tarafta da düzenlendiyse diğer sürüm `sync-conflict` etiketli ayrı bir not olarak saklanır. Etiketler, sabitlemeler ve görevler birleşim olarak alınır.
+- **AI Çöp Kutusu:**
+  - AI ajanlarının sildiği notlar silinmez, projenin çöp kutusuna taşınır; etiket ve sabitleme dahil geri yüklenebilir ya da kalıcı silinebilir.
+  - Tek tıkla "Çöp kutusunu boşalt" ve isteğe bağlı otomatik temizleme (N günden eski / N nottan fazla), varsayılan olarak kapalı.
+- **Güvenli Eşzamanlı Düzenleme:**
+  - Meta veriler atomik yazılır ve proje başına kilitle korunur; uygulama ve AI ajanları aynı projede dosyaları bozmadan çalışabilir.
+  - Siz düzenlerken değişen bir notu (örneğin bir AI ajanı güncellediyse) kaydetmeden önce sorar; ajanlar için de sürüm kontrolü vardır.
 - **Proje Organizasyonu ve Görevler (TODOs):**
   - Projelerinizi ayrı çalışma alanlarında izole edin.
   - Düz metin dosyasında tutulan görev listesi (`todos.md`).
@@ -201,16 +250,28 @@ Tüm veriler doğrudan yerel dosya sisteminizde düz Markdown (`.md`) ve standar
   - Claude Desktop, Cursor, Antigravity, Codex ve Windsurf ile anında tam uyum.
   - Arka planda çalışan hafif dosya izleyici ile yapay zekanın yaptığı değişiklikler masaüstü panosuna canlı yansır.
   - AI ajanlarının ürettiği notlarda ve görevlerde görsel AI mikroçip rozeti ile şeffaf kaynak takibi.
+  - Token dostu kademeli okuma: ajanlar notları satır satır listeleyebilir, tek bir notu okuyabilir, etikete veya üst nota göre filtreleyebilir ve tam bağlamı yalnızca gerektiğinde çekebilir.
 - **Güvenlik Duvarı ve İzin Yönetimi:**
   - Proje bazlı erişim denetimi: AI modellerinin hangi projelere erişebileceğini tek tıkla açıp kapatın.
   - Yetki kapsamı: not düzenleme ve silme sınırlarını belirleyin (sadece AI'ın kendi ürettikleri, tümü veya salt okunur).
-  - Canlı işlem nabzı ve işlem geçmişi denetim günlüğü.
+  - Proje bazlı istisnalar: açılır listeden bir proje seçip ona global ayardan farklı düzenleme/silme yetkisi verin.
+  - Canlı işlem nabzı ve işlem geçmişi denetim günlüğü (seçtiğiniz dilde).
 - **6 Renk Teması & Dinamik Kaydırma Çubukları:**
   - Karanlık Temalar: Amber Dark (Varsayılan), OLED Midnight, Emerald Forest, Slate Minimal.
   - Açık Temalar: Paper Light (Sıcak Kağıt & Amber), Nordic Frost (Ferah Gri & Kutup Mavisi).
   - Seçilen temaya göre otomatik renk alan modern ve ince kaydırma çubukları.
 - **Çift Dil Desteği:**
-  - Ayarlar menüsünden Türkçe ve İngilizce dilleri arasında anında geçiş yapın.
+  - Ayarlar menüsünden Türkçe ve İngilizce dilleri arasında anında geçiş yapın; hızlı yakalama penceresi, tepsi menüsü ve MCP işlem günlüğü de seçiminizi izler.
+
+---
+
+### Mimari ve Depolama
+
+- **Arka uç:** Rust (Tauri v2): global kısayollar, yerel dosya I/O, sistem tepsisi ve pencere yönetimi.
+- **Ön yüz:** React 18, TypeScript, Vite; harici UI çerçevesi yok.
+- **MCP sunucusu:** Standart giriş/çıkış (`stdio`) üzerinden konuşan gömülü Node.js betiği.
+- **Proje klasörü içeriği:** notlar (`<zaman damgası>.md`), ekran görüntüleri (`.png`), `todos.md` ve küçük düz-JSON meta dosyaları: `.tags.json` (etiketler), `.tree.json` (alt notlar), `.pinned.json`, `.order.json`, `.project.json` (proje kimliği), `.trash/` (AI'ın sildiği notlar). Her şey okunabilir kalır.
+- **Konum:** Windows `%APPDATA%\com.mindpipe.app\projects\<proje>\`, macOS `~/Library/Application Support/com.mindpipe.app/projects/<proje>/`, Linux `~/.config/com.mindpipe.app/projects/<proje>/`.
 
 ---
 
@@ -244,6 +305,24 @@ MindPipe'ı açıp sol alttaki MCP Durum çubuğuna tıkladığınızda sistemin
 command = "node"
 args = ['C:\Users\<KULLANICI_ADINIZ>\AppData\Roaming\com.mindpipe.app\mcp-server.cjs']
 ```
+
+#### Kullanılabilir MCP araçları
+
+| Araç | Ne yapar |
+| :--- | :--- |
+| `notes_list_projects` | Ajanın erişebildiği projeleri listeler |
+| `notes_get_project_context` | Bir projenin tam bağlamı (notlar, sabit kurallar, görevler); isteğe bağlı `tag` filtresi |
+| `notes_list_notes` | Hafif dizin, not başına tek satır (başlık, özet, etiket, boyut, tarih); `tag`, `parent`, `limit` ve `format: "json"` seçenekleri |
+| `notes_read_note` | Tek bir notu sürümü, etiketleri ve alt notlarıyla tam okur |
+| `notes_search` | Projeler arasında not arar; isteğe bağlı `tag` filtresi |
+| `notes_add_note` | Not ekler; isteğe bağlı `tags` ve `parent` (alt not) |
+| `notes_edit_note` | Notu düzenler; daha yeni değişikliklerin ezilmemesi için `expected_version` verilebilir |
+| `notes_delete_note` | Notu projenin çöp kutusuna taşır (geri alınabilir) |
+| `notes_set_tags` / `notes_set_parent` / `notes_pin_note` | Notu etiketler, iç içe geçirir veya sabitler |
+| `notes_add_todo` / `notes_toggle_todo` / `notes_delete_todo` | Proje görevlerini yönetir |
+| `notes_get_image` / `notes_create_project` | Ekran görüntüsü okur / proje oluşturur |
+
+Tüm araçlar MCP Denetim Masası'ndaki proje erişimi ayarına uyar; düzenleme ve silme araçları ayrıca düzenleme/silme yetkilerini (global veya proje bazlı istisna) izler.
 
 ---
 
