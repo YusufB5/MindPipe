@@ -2747,10 +2747,12 @@ export default function Dashboard() {
                     <div key={log.id} className="mcp-log-item">
                       <div className="mcp-log-item__header">
                         <span className="mcp-log-item__tool">{log.tool}</span>
-                        <span className="mcp-log-item__project">{log.project}</span>
+                        <span className="mcp-log-item__project">
+                          {lang === "en" ? ({ "Tüm Projeler": "All Projects", "Genel": "General" } as Record<string, string>)[log.project] ?? log.project : log.project}
+                        </span>
                         <span className="mcp-log-item__time">{formatTimestamp(log.timestamp)}</span>
                       </div>
-                      <div className="mcp-log-item__details">{log.details}</div>
+                      <div className="mcp-log-item__details">{lang === "en" && log.detailsEn ? log.detailsEn : log.details}</div>
                     </div>
                   ))}
                 </div>

@@ -3840,7 +3840,7 @@ body.is-reordering-cards * {
   font-style: normal;
   font-size: 9.5px;
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: 4px;
   color: #f59e0b;
   background: rgba(245, 158, 11, 0.14);
   border: 1px solid rgba(245, 158, 11, 0.35);

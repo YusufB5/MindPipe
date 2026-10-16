@@ -176,6 +176,8 @@ export interface McpLogEntry {
   tool: string;
   project: string;
   details: string;
+  /** English wording of `details`, when the MCP server provided one */
+  detailsEn?: string | null;
 }
 
 export interface ProjectPermOverride {

@@ -81,6 +81,9 @@ struct McpLogEntry {
     tool: String,
     project: String,
     details: String,
+    /// English wording of `details`, when the MCP server provided one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    details_en: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -1029,6 +1029,7 @@ const TOOLS = [
         project: { type: "string", description: "Proje adı" },
         tag: { type: "string", description: "İsteğe bağlı etiket filtresi" },
         limit: { type: "number", description: "İsteğe bağlı: en fazla kaç not dönsün" },
+        format: { type: "string", enum: ["text", "json"], description: "Varsayılan 'text' (not başına tek satır, az token). 'json': tam ayrıntı (tam ISO tarih, 140 karakter özet, tüm alanlar)." },
         parent: { type: "string", description: "İsteğe bağlı: yalnızca bu notun alt notlarını listele. Verilmezse yalnızca üst seviye notlar döner (alt notlar 'children' içinde başlık olarak görünür); tag verilirse düz liste." },
       },
       required: ["project"],
@@ -1221,6 +1222,8 @@ rl.on("line", (line) => {
 
 function logMcpActivity(toolName, project, details) {
   try {
+    const detailsTr = typeof details === "string" ? details : (details && details.tr) || "";
+    const detailsEn = typeof details === "object" && details ? details.en || null : null;
     const appDir = path.dirname(getProjectsRoot());
     if (!fs.existsSync(appDir)) fs.mkdirSync(appDir, { recursive: true });
     const logFile = path.join(appDir, "mcp-log.json");
@@ -1237,7 +1240,8 @@ function logMcpActivity(toolName, project, details) {
       timestamp: Date.now(),
       tool: toolName,
       project: project || "Genel",
-      details: details || "",
+      details: detailsTr,
+      detailsEn,
     };
     logs.unshift(entry);
     if (logs.length > 60) logs = logs.slice(0, 60);
@@ -1266,27 +1270,27 @@ function logMcpActivity(toolName, project, details) {
     try {
       if (name === "notes_list_projects") {
         const list = listProjects();
-        logMcpActivity("notes_list_projects", "Tüm Projeler", "Projeleri listeledi");
+        logMcpActivity("notes_list_projects", "Tüm Projeler", { tr: "Projeleri listeledi", en: "Listed projects" });
         respond({ content: [{ type: "text", text: JSON.stringify(list, null, 2) }] });
       } else if (name === "notes_get_project_context") {
         const context = getProjectContext(args.project, args.tag);
-        logMcpActivity("notes_get_project_context", args.project, args.tag ? `Notları okudu (etiket: ${args.tag})` : "Notları ve görevleri okudu");
+        logMcpActivity("notes_get_project_context", args.project, args.tag ? { tr: `Notları okudu (etiket: ${args.tag})`, en: `Read notes (tag: ${args.tag})` } : { tr: "Notları ve görevleri okudu", en: "Read notes and tasks" });
         respond({ content: [{ type: "text", text: context }] });
       } else if (name === "notes_list_notes") {
         const res = listNotes(args.project, args.tag, args.limit, args.parent);
-        logMcpActivity("notes_list_notes", args.project, `Not dizini okudu (${res.returned}/${res.total})`);
-        respond({ content: [{ type: "text", text: formatNoteList(res) }] });
+        logMcpActivity("notes_list_notes", args.project, { tr: `Not dizini okudu (${res.returned}/${res.total})`, en: `Read note index (${res.returned}/${res.total})` });
+        respond({ content: [{ type: "text", text: args.format === "json" ? JSON.stringify(res, null, 2) : formatNoteList(res) }] });
       } else if (name === "notes_read_note") {
         const text = readNote(args.project, args.noteName);
-        logMcpActivity("notes_read_note", args.project, `Not okudu: ${args.noteName}`);
+        logMcpActivity("notes_read_note", args.project, { tr: `Not okudu: ${args.noteName}`, en: `Read note: ${args.noteName}` });
         respond({ content: [{ type: "text", text }] });
       } else if (name === "notes_pin_note") {
         const res = setNotePinned(args.project, args.noteName, args.pinned);
-        logMcpActivity("notes_pin_note", args.project, `${res.pinned ? "Sabitlendi" : "Sabitleme kaldırıldı"}: ${res.file}`);
+        logMcpActivity("notes_pin_note", args.project, { tr: `${res.pinned ? "Sabitlendi" : "Sabitleme kaldırıldı"}: ${res.file}`, en: `${res.pinned ? "Pinned" : "Unpinned"}: ${res.file}` });
         respond({ content: [{ type: "text", text: `${res.pinned ? "Sabitlendi" : "Sabitleme kaldırıldı"}: ${res.file}` }] });
       } else if (name === "notes_get_image") {
         const img = getImage(args.project, args.imageName);
-        logMcpActivity("notes_get_image", args.project, `Ekran görüntüsü incelendi: ${args.imageName}`);
+        logMcpActivity("notes_get_image", args.project, { tr: `Ekran görüntüsü incelendi: ${args.imageName}`, en: `Viewed screenshot: ${args.imageName}` });
         respond({
           content: [
             { type: "text", text: `Görsel Dosya Yolu: ${img.filePath}` },
@@ -1295,49 +1299,49 @@ function logMcpActivity(toolName, project, details) {
         });
       } else if (name === "notes_search") {
         const results = searchNotes(args.query, args.project, args.tag);
-        logMcpActivity("notes_search", args.project || "Tüm Projeler", `Arama yapıldı: "${args.query || ""}"${args.tag ? ` (etiket: ${args.tag})` : ""}`);
+        logMcpActivity("notes_search", args.project || "Tüm Projeler", { tr: `Arama yapıldı: "${args.query || ""}"${args.tag ? ` (etiket: ${args.tag})` : ""}`, en: `Searched: "${args.query || ""}"${args.tag ? ` (tag: ${args.tag})` : ""}` });
         respond({ content: [{ type: "text", text: JSON.stringify(results, null, 2) }] });
       } else if (name === "notes_create_project") {
         const res = createProject(args.project);
-        logMcpActivity("notes_create_project", args.project, `Yeni proje açtı: "${res.project}"`);
+        logMcpActivity("notes_create_project", args.project, { tr: `Yeni proje açtı: "${res.project}"`, en: `Created project: "${res.project}"` });
         respond({ content: [{ type: "text", text: `Proje başarıyla oluşturuldu: ${res.project}` }] });
       } else if (name === "notes_add_note") {
         const res = addProjectNote(args.project, args.content, args.tags, args.parent);
-        logMcpActivity("notes_add_note", args.project, `Yeni not oluşturdu: ${res.file}${res.tags.length ? ` [${res.tags.join(", ")}]` : ""}${res.parent ? ` (alt not: ${res.parent})` : ""}`);
+        logMcpActivity("notes_add_note", args.project, { tr: `Yeni not oluşturdu: ${res.file}${res.tags.length ? ` [${res.tags.join(", ")}]` : ""}${res.parent ? ` (alt not: ${res.parent})` : ""}`, en: `Created note: ${res.file}${res.tags.length ? ` [${res.tags.join(", ")}]` : ""}${res.parent ? ` (sub-note of: ${res.parent})` : ""}` });
         respond({ content: [{ type: "text", text: `Not başarıyla eklendi: ${res.file}${res.parent ? ` (üst not: ${res.parent})` : ""}${res.parentError ? ` — uyarı: üst not bağlanamadı: ${res.parentError}` : ""}` }] });
       } else if (name === "notes_set_parent") {
         const res = setNoteParent(args.project, args.noteName, args.parent);
-        logMcpActivity("notes_set_parent", args.project, res.parent ? `${res.file} -> alt not: ${res.parent}` : `${res.file} üst seviyeye çıkarıldı`);
+        logMcpActivity("notes_set_parent", args.project, res.parent ? { tr: `${res.file} -> alt not: ${res.parent}`, en: `${res.file} -> sub-note of: ${res.parent}` } : { tr: `${res.file} üst seviyeye çıkarıldı`, en: `${res.file} moved to top level` });
         respond({ content: [{ type: "text", text: res.parent ? `${res.file} artık ${res.parent} notunun alt notu.` : `${res.file} üst seviyeye çıkarıldı.` }] });
       } else if (name === "notes_set_tags") {
         const res = setNoteTags(args.project, args.noteName, args.tags);
-        logMcpActivity("notes_set_tags", args.project, `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]`);
+        logMcpActivity("notes_set_tags", args.project, { tr: `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]`, en: `Tags updated: ${res.file} -> [${res.tags.join(", ")}]` });
         respond({ content: [{ type: "text", text: `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]` }] });
       } else if (name === "notes_edit_note") {
         const res = editProjectNote(args.project, args.noteName, args.content, args.expected_version);
-        logMcpActivity("notes_edit_note", args.project, `Not güncellendi: ${res.file}`);
+        logMcpActivity("notes_edit_note", args.project, { tr: `Not güncellendi: ${res.file}`, en: `Note updated: ${res.file}` });
         respond({ content: [{ type: "text", text: `Not başarıyla güncellendi: ${res.file} (yeni sürüm: ${res.version})` }] });
       } else if (name === "notes_delete_note") {
         const res = deleteProjectNote(args.project, args.noteName);
-        logMcpActivity("notes_delete_note", args.project, `Not çöp kutusuna taşındı: ${res.file}`);
+        logMcpActivity("notes_delete_note", args.project, { tr: `Not çöp kutusuna taşındı: ${res.file}`, en: `Note moved to trash: ${res.file}` });
         respond({ content: [{ type: "text", text: `Not çöp kutusuna taşındı (geri alınabilir): ${res.file}` }] });
       } else if (name === "notes_add_todo") {
         const res = addProjectTodo(args.project, args.text);
-        logMcpActivity("notes_add_todo", args.project, `Yeni görev ekledi: "${res.text}"`);
+        logMcpActivity("notes_add_todo", args.project, { tr: `Yeni görev ekledi: "${res.text}"`, en: `Added task: "${res.text}"` });
         respond({ content: [{ type: "text", text: `Görev başarıyla eklendi: "${res.text}"` }] });
       } else if (name === "notes_toggle_todo") {
         const res = toggleProjectTodo(args.project, args.text, args.done);
-        logMcpActivity("notes_toggle_todo", args.project, `Görev durumu güncellendi: "${args.text}" -> ${args.done ? "Tamamlandı" : "Bekliyor"}`);
+        logMcpActivity("notes_toggle_todo", args.project, { tr: `Görev durumu güncellendi: "${args.text}" -> ${args.done ? "Tamamlandı" : "Bekliyor"}`, en: `Task status updated: "${args.text}" -> ${args.done ? "Done" : "Pending"}` });
         respond({ content: [{ type: "text", text: `Görev güncellendi: "${args.text}" -> ${args.done ? "Tamamlandı" : "Bekliyor"}` }] });
       } else if (name === "notes_delete_todo") {
         const res = deleteProjectTodo(args.project, args.text);
-        logMcpActivity("notes_delete_todo", args.project, `Görev silindi: "${res.text}"`);
+        logMcpActivity("notes_delete_todo", args.project, { tr: `Görev silindi: "${res.text}"`, en: `Task deleted: "${res.text}"` });
         respond({ content: [{ type: "text", text: `Görev silindi: "${res.text}"` }] });
       } else {
         error(-32601, `Bilinmeyen tool: ${name}`);
       }
     } catch (err) {
-      logMcpActivity(name || "hata", args?.project || "Genel", `Hata: ${err.message}`);
+      logMcpActivity(name || "hata", args?.project || "Genel", { tr: `Hata: ${err.message}`, en: `Error: ${err.message}` });
       respond({ content: [{ type: "text", text: `Hata: ${err.message}` }], isError: true });
     }
   } else if (method === "notifications/initialized") {
