@@ -357,3 +357,8 @@ export function importBundle(dataB64: string, mode: "merge" | "new", target?: st
 export function revealInFolder(path: string): Promise<void> {
   return invoke("reveal_in_folder", { path });
 }
+
+/** Keeps the tray menu text in the UI language. */
+export function setTrayLanguage(lang: string): Promise<void> {
+  return invoke("set_tray_language", { lang });
+}

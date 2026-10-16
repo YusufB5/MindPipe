@@ -15,6 +15,26 @@ mod bundle;
 const CAPTURE_SHORTCUT: &str = "Ctrl+Shift+N";
 const EMBEDDED_MCP_SERVER: &str = include_str!("../../mcp-server.cjs");
 
+/// Tray menu entries, kept so their text can follow the UI language.
+struct TrayItems {
+    open: tauri::menu::MenuItem<tauri::Wry>,
+    quit: tauri::menu::MenuItem<tauri::Wry>,
+}
+
+#[tauri::command]
+fn set_tray_language(app: AppHandle, lang: String) -> Result<(), String> {
+    let (open, quit) = if lang == "en" {
+        ("Open MindPipe", "Quit")
+    } else {
+        ("MindPipe'ı Aç", "Çıkış")
+    };
+    if let Some(items) = app.try_state::<TrayItems>() {
+        items.open.set_text(open).map_err(|e| e.to_string())?;
+        items.quit.set_text(quit).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn ensure_mcp_server(app_dir: &std::path::Path) {
     let target = app_dir.join("mcp-server.cjs");
     let needs_write = match fs::read_to_string(&target) {
@@ -1920,6 +1940,10 @@ pub fn run() {
             let dashboard_item =
                 MenuItemBuilder::with_id("dashboard", "MindPipe'ı Aç").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Çıkış").build(app)?;
+            app.manage(TrayItems {
+                open: dashboard_item.clone(),
+                quit: quit_item.clone(),
+            });
             let menu = MenuBuilder::new(app)
                 .items(&[&dashboard_item, &quit_item])
                 .build()?;
@@ -2056,6 +2080,7 @@ pub fn run() {
             set_project_permission_override,
             set_entry_parent,
             note_modified,
+            set_tray_language,
             bundle::export_project,
             bundle::inspect_bundle,
             bundle::import_bundle,

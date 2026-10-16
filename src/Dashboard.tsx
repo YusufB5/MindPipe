@@ -30,6 +30,7 @@ import {
   setProjectPermissionOverride,
   setEntryParent,
   noteModified,
+  setTrayLanguage,
   exportProject,
   inspectBundle,
   importBundle,
@@ -245,6 +246,11 @@ export default function Dashboard() {
     applyTheme(theme);
   }, [theme]);
 
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    setTrayLanguage(lang).catch(() => {});
+  }, [lang]);
+
   function handleLanguageChange(newLang: Language) {
     setLang(newLang);
     localStorage.setItem("mindpipe_lang", newLang);
@@ -328,7 +334,7 @@ export default function Dashboard() {
       setMcpConfigCopied(true);
       setTimeout(() => setMcpConfigCopied(false), 2200);
     } catch (err) {
-      alert(lang === "tr" ? `Kopyalanamadı: ${String(err)}` : `Copy failed: ${String(err)}`);
+      alert(lang === "tr" ? `Kopyalanamadı: ${errorText(err)}` : `Copy failed: ${errorText(err)}`);
     }
   }
 
@@ -357,7 +363,7 @@ export default function Dashboard() {
       await toggleProjectMcpAccess(projectName);
       await refreshMcpStatus();
     } catch (err) {
-      alert(lang === "tr" ? `Erişim izni güncellenemedi: ${String(err)}` : `Failed to update permission: ${String(err)}`);
+      alert(lang === "tr" ? `Erişim izni güncellenemedi: ${errorText(err)}` : `Failed to update permission: ${errorText(err)}`);
     }
   }
 
@@ -366,7 +372,7 @@ export default function Dashboard() {
       await clearMcpLogs();
       await refreshMcpStatus();
     } catch (err) {
-      alert(lang === "tr" ? `Loglar temizlenemedi: ${String(err)}` : `Failed to clear logs: ${String(err)}`);
+      alert(lang === "tr" ? `Loglar temizlenemedi: ${errorText(err)}` : `Failed to clear logs: ${errorText(err)}`);
     }
   }
 
@@ -375,7 +381,7 @@ export default function Dashboard() {
       await setProjectPermissionOverride(project, key, value);
       await refreshMcpStatus();
     } catch (err) {
-      alert(lang === "tr" ? `Yetki ayarı kaydedilemedi: ${String(err)}` : `Failed to save permission: ${String(err)}`);
+      alert(lang === "tr" ? `Yetki ayarı kaydedilemedi: ${errorText(err)}` : `Failed to save permission: ${errorText(err)}`);
     }
   }
 
@@ -385,7 +391,7 @@ export default function Dashboard() {
       await clearProjectPermissionOverride(project);
       await refreshMcpStatus();
     } catch (err) {
-      alert(lang === "tr" ? `İstisna kaldırılamadı: ${String(err)}` : `Failed to remove override: ${String(err)}`);
+      alert(lang === "tr" ? `İstisna kaldırılamadı: ${errorText(err)}` : `Failed to remove override: ${errorText(err)}`);
     }
   }
 
@@ -406,6 +412,12 @@ export default function Dashboard() {
       ["Alt notları olan", "errHasChildren"],
       ["başka bir işlem tarafından", "errProjectBusy"],
       ["Çöp kutusunda bulunamadı", "errNotInTrash"],
+      ["Hedef proje bulunamadı", "errProjectNotFound"],
+      ["Proje bulunamadı", "errProjectNotFound"],
+      ["Geçersiz proje adı", "errInvalidProjectName"],
+      ["Proje adı geçersiz", "errInvalidProjectName"],
+      ["Proje adı boş", "errInvalidProjectName"],
+      ["Kısayol boş bırakılamaz", "errShortcutEmpty"],
       ["daha yeni bir MindPipe", "errBundleNewer"],
       ["Paket bozuk", "errBundleCorrupt"],
       ["Geçersiz paket", "errBundleInvalid"],
@@ -525,7 +537,7 @@ export default function Dashboard() {
       await setMcpPermissionSetting(key, value);
       await refreshMcpStatus();
     } catch (err) {
-      alert(lang === "tr" ? `Yetki ayarı kaydedilemedi: ${String(err)}` : `Failed to save permission: ${String(err)}`);
+      alert(lang === "tr" ? `Yetki ayarı kaydedilemedi: ${errorText(err)}` : `Failed to save permission: ${errorText(err)}`);
     }
   }
 
@@ -777,7 +789,7 @@ export default function Dashboard() {
       await refreshProjects();
       setActive(name);
     } catch (err) {
-      alert(`Proje oluşturulamadı: ${String(err)}`);
+      alert(`${t("errCreateProject")}: ${errorText(err)}`);
     }
   }
 
@@ -787,7 +799,7 @@ export default function Dashboard() {
       await togglePinEntry(active, entry.id);
       await refreshEntries(active);
     } catch (err) {
-      alert(`Sabitleme işlemi başarısız: ${String(err)}`);
+      alert(`${t("errPinFailed")}: ${errorText(err)}`);
     }
   }
 
@@ -795,10 +807,10 @@ export default function Dashboard() {
     try {
       const text = await exportAiContext(active);
       await navigator.clipboard.writeText(text);
-      setAiContextStatus("AI Bağlamı Kopyalandı ✓");
+      setAiContextStatus(t("aiContextCopied"));
       setTimeout(() => setAiContextStatus(""), 2500);
     } catch (err) {
-      alert(`AI Bağlamı kopyalanamadı: ${String(err)}`);
+      alert(`${t("errCopyAiContext")}: ${errorText(err)}`);
     }
   }
 
@@ -1002,7 +1014,7 @@ export default function Dashboard() {
       setNewTodoText("");
       await refreshTodos(active);
     } catch (err) {
-      alert(`Görev eklenemedi: ${String(err)}`);
+      alert(`${t("errAddTask")}: ${errorText(err)}`);
     }
   }
 
@@ -1011,7 +1023,7 @@ export default function Dashboard() {
       await toggleTodo(active, id, done);
       await refreshTodos(active);
     } catch (err) {
-      alert(`Görev güncellenemedi: ${String(err)}`);
+      alert(`${t("errUpdateTask")}: ${errorText(err)}`);
     }
   }
 
@@ -1020,7 +1032,7 @@ export default function Dashboard() {
       await deleteTodo(active, id);
       await refreshTodos(active);
     } catch (err) {
-      alert(`Görev silinemedi: ${String(err)}`);
+      alert(`${t("errDeleteTask")}: ${errorText(err)}`);
     }
   }
 
@@ -1038,7 +1050,7 @@ export default function Dashboard() {
       await refreshProjects();
       setActive("inbox");
     } catch (err) {
-      alert(`Proje silinemedi: ${String(err)}`);
+      alert(`Proje silinemedi: ${errorText(err)}`);
     }
   }
 
@@ -1047,7 +1059,7 @@ export default function Dashboard() {
     try {
       await openProjectFolder(projectName);
     } catch (err) {
-      alert(`Klasör açılamadı: ${String(err)}`);
+      alert(`${t("errOpenFolder")}: ${errorText(err)}`);
     }
   }
 
@@ -1061,7 +1073,7 @@ export default function Dashboard() {
         setEditorContent(text);
         setEditorBaseVersion(version);
       } catch (err) {
-        setEditorContent(`Hata: Not okunamadı (${String(err)})`);
+        setEditorContent(`${t("statusError")}: ${t("errReadNote")} (${errorText(err)})`);
       } finally {
         setEditorLoading(false);
       }
@@ -1071,7 +1083,7 @@ export default function Dashboard() {
   async function handleSaveEditedNote() {
     if (!editingEntry) return;
     try {
-      setEditorStatus("Kaydediliyor...");
+      setEditorStatus(t("statusSaving"));
       try {
         await updateNote(editingEntry.path, editorContent, editorBaseVersion);
       } catch (err) {
@@ -1083,11 +1095,11 @@ export default function Dashboard() {
         await updateNote(editingEntry.path, editorContent, null);
       }
       setEditorBaseVersion(await noteModified(editingEntry.path));
-      setEditorStatus("Kaydedildi ✓");
+      setEditorStatus(t("statusSaved"));
       await refreshEntries(active);
       setTimeout(() => setEditorStatus(""), 2000);
     } catch (err) {
-      setEditorStatus(`Hata: ${String(err)}`);
+      setEditorStatus(`${t("statusError")}: ${errorText(err)}`);
     }
   }
 
@@ -1103,7 +1115,7 @@ export default function Dashboard() {
       }
       await refreshEntries(active);
     } catch (err) {
-      alert(`Silinemedi: ${String(err)}`);
+      alert(`${t("errDeleteFailed")}: ${errorText(err)}`);
     }
   }
 
@@ -1121,7 +1133,7 @@ export default function Dashboard() {
       });
       await refreshEntries(active);
     } catch (err) {
-      alert(`Görsel silinemedi: ${String(err)}`);
+      alert(`${t("errDeleteImage")}: ${errorText(err)}`);
     }
   }
 
@@ -1145,7 +1157,7 @@ export default function Dashboard() {
 
   async function handleSaveInlineNote(entry: EntryMeta) {
     try {
-      setInlineStatus("Kaydediliyor...");
+      setInlineStatus(t("statusSaving"));
       try {
         await updateNote(entry.path, inlineDraftText, inlineBaseVersionRef.current);
       } catch (err) {
@@ -1158,14 +1170,14 @@ export default function Dashboard() {
       }
       setNoteContents((prev) => ({ ...prev, [entry.path]: inlineDraftText }));
       setExpandedNotes((prev) => ({ ...prev, [entry.path]: true }));
-      setInlineStatus("Kaydedildi ✓");
+      setInlineStatus(t("statusSaved"));
       setTimeout(() => {
         setInlineEditingPath(null);
         setInlineStatus("");
       }, 400);
       await refreshEntries(active, true);
     } catch (err) {
-      setInlineStatus(`Hata: ${String(err)}`);
+      setInlineStatus(`${t("statusError")}: ${errorText(err)}`);
     }
   }
 
@@ -1192,7 +1204,7 @@ export default function Dashboard() {
       await deleteImageFile(imgPath);
       await refreshEntries(active, true);
     } catch (err) {
-      alert(`Görsel silinemedi: ${String(err)}`);
+      alert(`${t("errDeleteImage")}: ${errorText(err)}`);
     }
   }
 
@@ -1228,7 +1240,7 @@ export default function Dashboard() {
       setIsCreatingNote(false);
       await refreshEntries(active);
     } catch (err) {
-      alert(`Not kaydedilemedi: ${String(err)}`);
+      alert(`Not kaydedilemedi: ${errorText(err)}`);
     }
   }
 
@@ -1307,11 +1319,11 @@ export default function Dashboard() {
           try {
             const stripped = stripDataUrlPrefix(dataUrl);
             await attachImageToEntry(inlineEditingPath, stripped);
-            setInlineStatus("Yeni görsel eklendi ✓");
+            setInlineStatus(t("statusImageAdded"));
             setTimeout(() => setInlineStatus(""), 2200);
             await refreshEntries(active, true);
           } catch (err) {
-            alert(`Görsel eklenemedi: ${String(err)}`);
+            alert(`${t("errAddImage")}: ${errorText(err)}`);
           }
           return;
         }
@@ -1329,11 +1341,11 @@ export default function Dashboard() {
               imagePaths: updatedImages,
               kind: editingEntry.kind === "note" ? "mixed" : editingEntry.kind,
             });
-            setEditorStatus("Yeni görsel eklendi ✓");
+            setEditorStatus(t("statusImageAdded"));
             setTimeout(() => setEditorStatus(""), 2500);
             await refreshEntries(active);
           } catch (err) {
-            alert(`Görsel eklenemedi: ${String(err)}`);
+            alert(`${t("errAddImage")}: ${errorText(err)}`);
           }
         }
       }
@@ -1395,7 +1407,7 @@ export default function Dashboard() {
                           ? (lang === "tr" ? `AI Aktif İşlem Yapıyor: ${mcpStatus.detectedClient || "AI"}\n(Tıkla: Bu projenin AI erişimini KAPAT)` : `AI Actively Processing: ${mcpStatus.detectedClient || "AI"}\n(Click to BLOCK AI access)`)
                           : (lang === "tr" ? `AI Erişimi Açık (Hazır / Beklemede - ${mcpStatus.detectedClient || "AI"})\n(Tıkla: Bu projenin AI erişimini KAPAT)` : `AI Access Allowed (Ready / Idle - ${mcpStatus.detectedClient || "AI"})\n(Click to BLOCK AI access)`)
                       }
-                      aria-label={`MCP AI Erişimi (${p})`}
+                      aria-label={t("projectAiAccess")(p)}
                     >
                       <span className="dashboard__project-mcp-dot" />
                     </button>
@@ -1404,7 +1416,7 @@ export default function Dashboard() {
                     className={`dashboard__project-name ${
                       mcpStatus?.aiProjects?.includes(p) ? "dashboard__project-name--ai" : ""
                     }`}
-                    title={mcpStatus?.aiProjects?.includes(p) ? "Bu proje AI tarafından oluşturuldu" : undefined}
+                    title={mcpStatus?.aiProjects?.includes(p) ? t("aiCreatedProject") : undefined}
                   >
                     {p}
                   </span>
@@ -1495,7 +1507,7 @@ export default function Dashboard() {
               <div className="dashboard__title-wrap">
                 <h1 title={active}>{active}</h1>
                 {mcpStatus?.aiProjects?.includes(active) && (
-                  <span className="dashboard__ai-badge" title="Bu proje AI tarafından oluşturuldu">
+                  <span className="dashboard__ai-badge" title={t("aiCreatedProject")}>
                     <AiSparkleIcon size={12} />
                   </span>
                 )}
@@ -1660,7 +1672,7 @@ export default function Dashboard() {
                                 <span className="todo-item__custom-box" />
                                 <span className="todo-item__text">{todo.text}</span>
                                 {todo.isAi && (
-                                  <span className="todo-item__ai-chip" title="Bu görev AI tarafından oluşturuldu">
+                                  <span className="todo-item__ai-chip" title={t("aiCreatedTask")}>
                                     <AiSparkleIcon size={11} />
                                   </span>
                                 )}
@@ -1700,7 +1712,7 @@ export default function Dashboard() {
                                 <span className="todo-item__custom-box" />
                                 <span className="todo-item__text">{todo.text}</span>
                                 {todo.isAi && (
-                                  <span className="todo-item__ai-chip" title="Bu görev AI tarafından oluşturuldu">
+                                  <span className="todo-item__ai-chip" title={t("aiCreatedTask")}>
                                     <AiSparkleIcon size={11} />
                                   </span>
                                 )}
@@ -1744,7 +1756,7 @@ export default function Dashboard() {
                       type="button"
                       className="dashboard__search-clear"
                       onClick={() => setSearchQuery("")}
-                      title="Aramayı Temizle (Esc)"
+                      title={t("clearSearchTitle")}
                     >
                       ✕
                     </button>
@@ -1804,7 +1816,7 @@ export default function Dashboard() {
                     <div className="dashboard__quick-note-images">
                       {newNoteImages.map((img, idx) => (
                         <div key={idx} className="dashboard__quick-note-image-chip">
-                          <img src={img} alt={`Görsel ${idx + 1}`} />
+                          <img src={img} alt={t("imageAlt")(idx + 1)} />
                           <button
                             type="button"
                             className="dashboard__quick-note-image-remove"
@@ -2354,7 +2366,7 @@ export default function Dashboard() {
               <div className="modal-card__title-box">
                 <span className="modal-card__title">{editingEntry.name}</span>
                 {editingEntry.isAi && (
-                  <span className="entry__ai-tag" title="Bu not AI tarafından oluşturuldu / yönetildi">
+                  <span className="entry__ai-tag" title={t("aiCreatedNote")}>
                     <AiSparkleIcon size={11} />
                   </span>
                 )}
@@ -2380,7 +2392,7 @@ export default function Dashboard() {
                     <div key={i} className="modal-card__gallery-item">
                       <img
                         src={convertFileSrc(imgPath)}
-                        alt={`Görsel ${i + 1}`}
+                        alt={t("imageAlt")(i + 1)}
                         className="modal-card__gallery-image"
                         onClick={() => setLightboxImage(imgPath)}
                         title={t("clickToZoom")}
@@ -2401,7 +2413,7 @@ export default function Dashboard() {
               {/* Paste helper hint in modal */}
               <div className="modal-card__paste-hint">
                 {lang === "tr" ? (
-                  <>Yeni ekran görüntüsü eklemek için doğrudan <strong>Ctrl+V</strong> ile yapıştırabilirsiniz.</>
+                  lang === "tr" ? <>Yeni ekran görüntüsü eklemek için doğrudan <strong>Ctrl+V</strong> ile yapıştırabilirsiniz.</> : <>To add a new screenshot, paste directly with <strong>Ctrl+V</strong>.</>
                 ) : (
                   <>Paste new screenshots directly with <strong>Ctrl+V</strong>.</>
                 )}
@@ -2476,7 +2488,7 @@ export default function Dashboard() {
           <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
             <img
               src={convertFileSrc(lightboxImage)}
-              alt="Tam boyut ekran görüntüsü"
+              alt={t("screenshotFullAlt")}
               className="lightbox-image"
             />
             <button

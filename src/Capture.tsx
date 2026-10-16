@@ -30,6 +30,11 @@ function setStoredProject(p: string) {
 
 export default function Capture() {
   const [lang, setLang] = useState<Language>(getInitialLanguage);
+  const t = <K extends keyof typeof translations.tr>(key: K): (typeof translations.tr)[K] =>
+    (translations[lang] as typeof translations.tr)[key];
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
   const [projects, setProjects] = useState<string[]>([]);
   const [project, setProject] = useState<string>(getStoredProject);
   const [text, setText] = useState("");
@@ -77,10 +82,10 @@ export default function Capture() {
       setIsCreatingProject(false);
       await loadProjects();
       handleSelectProject(name);
-      setStatus(`"${name}" oluşturuldu`);
+      setStatus(t("captureProjectCreated")(name));
       setTimeout(() => textareaRef.current?.focus(), 50);
     } catch (err) {
-      setStatus(`Hata: ${String(err)}`);
+      setStatus(`${t("statusError")}: ${String(err)}`);
     }
   }
 
@@ -123,7 +128,7 @@ export default function Capture() {
       if (dataUrl) {
         e.preventDefault();
         setImages((prev) => [...prev, dataUrl]);
-        setStatus("Görsel eklendi");
+        setStatus(t("captureImageAdded"));
         textareaRef.current?.focus();
       }
     }
@@ -158,7 +163,7 @@ export default function Capture() {
     }
 
     setIsSaving(true);
-    setStatus("Kaydediliyor...");
+    setStatus(t("statusSaving"));
 
     try {
       const strippedImages = images.map((img) => stripDataUrlPrefix(img));
@@ -170,7 +175,7 @@ export default function Capture() {
       reset();
       await appWindow.hide();
     } catch (err) {
-      setStatus(`Kaydedilemedi: ${String(err)}`);
+      setStatus(`${t("errSaveFailed")}: ${String(err)}`);
       setIsSaving(false);
     }
   }
@@ -265,7 +270,7 @@ export default function Capture() {
               <div key={idx} className="capture__attachment-chip">
                 <img
                   src={img}
-                  alt={`Ekran görüntüsü ${idx + 1}`}
+                  alt={t("screenshotAlt")(idx + 1)}
                   className="capture__attachment-chip-thumb"
                 />
                 <button
