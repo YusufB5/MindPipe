@@ -251,6 +251,18 @@ export const translations = {
     startupHiddenDesc: "Pencere açılmaz; tepsi simgesinden veya kısayoldan ulaşırsın.",
     startupDevOnly: "Bu ayar yalnızca kurulu sürümde değiştirilebilir (geliştirme sürümünde kapalıdır).",
     errStartupDev: "Başlangıç ayarı yalnızca kurulu sürümde değiştirilebilir.",
+    dropOverlay: "Bırak: görsel veya .txt / .md dosyası ekle",
+    dropOverlayPipe: "Görseli bırak",
+    dropNothing: "Desteklenen dosya yok (görsel, .txt, .md)",
+    dropImagesOnly: "Burada yalnızca görseller desteklenir",
+    dropSummary: (notes: number, images: number, skipped: number) =>
+      [
+        notes > 0 ? `${notes} not eklendi` : "",
+        images > 0 ? `${images} görsel eklendi` : "",
+        skipped > 0 ? `${skipped} dosya atlandı` : "",
+      ]
+        .filter(Boolean)
+        .join(", "),
     addSubNote: "+ Alt not",
     addSubNoteTitle: "Bu notun altına yeni bir alt not ekle",
     subNoteOf: "Alt not:",
@@ -514,6 +526,18 @@ export const translations = {
     startupHiddenDesc: "No window opens; use the tray icon or the shortcut.",
     startupDevOnly: "This can only be changed in the installed app (it is disabled in development builds).",
     errStartupDev: "Startup can only be changed in the installed app.",
+    dropOverlay: "Drop to add images or .txt / .md files",
+    dropOverlayPipe: "Drop images",
+    dropNothing: "No supported files (images, .txt, .md)",
+    dropImagesOnly: "Only images are supported here",
+    dropSummary: (notes: number, images: number, skipped: number) =>
+      [
+        notes > 0 ? `${notes} note${notes === 1 ? "" : "s"} added` : "",
+        images > 0 ? `${images} image${images === 1 ? "" : "s"} added` : "",
+        skipped > 0 ? `${skipped} file${skipped === 1 ? "" : "s"} skipped` : "",
+      ]
+        .filter(Boolean)
+        .join(", "),
     addSubNote: "+ Sub-note",
     addSubNoteTitle: "Add a new sub-note under this note",
     subNoteOf: "Sub-note of:",

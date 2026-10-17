@@ -61,6 +61,7 @@ import {
   type SearchResultItem,
   type McpStatus,
 } from "./lib/api";
+import { imageToPngDataUrl, listenForFileDrops, readDroppedFiles } from "./lib/dropFiles";
 import { extractImageFromPasteEvent, stripDataUrlPrefix } from "./lib/clipboardImage";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -434,6 +435,83 @@ export default function Dashboard() {
     }
     return msg;
   }
+
+  // ----- Dropping files onto the window: images go into the note composer, .txt/.md become notes -----
+  const [dropActive, setDropActive] = useState(false);
+  const [dropToast, setDropToast] = useState("");
+  const dropToastTimer = useRef<number | undefined>(undefined);
+  const dropHandlerRef = useRef<(paths: string[]) => void>(() => {});
+  const modalOpenRef = useRef(false);
+  modalOpenRef.current = Boolean(
+    editingEntry || isSettingsOpen || isMcpModalOpen || trashOpen || shareOpen || tagModalEntry || lightboxImage
+  );
+
+  function showDropToast(message: string) {
+    setDropToast(message);
+    window.clearTimeout(dropToastTimer.current);
+    dropToastTimer.current = window.setTimeout(() => setDropToast(""), 4000);
+  }
+
+  async function handleFilesDropped(paths: string[]) {
+    if (modalOpenRef.current || paths.length === 0) return;
+    const { files, skipped } = await readDroppedFiles(paths);
+    const images = files.filter((f) => f.kind === "image");
+    const texts = files.filter((f) => f.kind === "text");
+    if (images.length === 0 && texts.length === 0) {
+      showDropToast(t("dropNothing"));
+      return;
+    }
+    setActiveTab("notes");
+
+    let imagesAdded = 0;
+    let skippedTotal = skipped;
+    if (images.length > 0) {
+      const urls: string[] = [];
+      for (const img of images) {
+        try {
+          urls.push(await imageToPngDataUrl(img));
+        } catch {
+          skippedTotal += 1;
+        }
+      }
+      if (urls.length > 0) {
+        setNewNoteImages((prev) => [...prev, ...urls]);
+        setIsCreatingNote(true);
+        imagesAdded = urls.length;
+      }
+    }
+
+    let notesAdded = 0;
+    for (const file of texts) {
+      try {
+        await saveNote(active, file.data);
+        notesAdded += 1;
+      } catch {
+        skippedTotal += 1;
+      }
+    }
+    if (notesAdded > 0) await refreshEntries(active, true);
+    showDropToast(t("dropSummary")(notesAdded, imagesAdded, skippedTotal));
+  }
+  dropHandlerRef.current = handleFilesDropped;
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listenForFileDrops({
+      onHover: (active) => setDropActive(active && !modalOpenRef.current),
+      onDrop: (paths) => dropHandlerRef.current(paths),
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (isSettingsOpen) {
@@ -3323,6 +3401,13 @@ export default function Dashboard() {
       )}
 
 
+
+      {dropActive && (
+        <div className="drop-overlay">
+          <span>{t("dropOverlay")}</span>
+        </div>
+      )}
+      {dropToast && <div className="drop-toast">{dropToast}</div>}
 
       {/* Share / Import Modal */}
       {shareOpen && (

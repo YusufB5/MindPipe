@@ -4247,3 +4247,44 @@ body.is-reordering-cards * {
   opacity: 0.5;
   cursor: default;
 }
+
+/* File drop feedback */
+.drop-overlay,
+.capture__drop {
+  position: fixed;
+  inset: 8px;
+  z-index: 9990;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--spine);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--spine) 10%, transparent);
+  backdrop-filter: blur(2px);
+  color: var(--spine);
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.capture__drop {
+  inset: 4px;
+  font-size: 13px;
+}
+
+.drop-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 9991;
+  transform: translateX(-50%);
+  max-width: 80vw;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}

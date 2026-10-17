@@ -12,6 +12,7 @@ use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_opener::OpenerExt;
 
 mod bundle;
+mod dropfile;
 
 const CAPTURE_SHORTCUT: &str = "Ctrl+Shift+N";
 const EMBEDDED_MCP_SERVER: &str = include_str!("../../mcp-server.cjs");
@@ -205,8 +206,20 @@ fn sanitize_name(name: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-fn timestamped_filename(ext: &str) -> String {
-    format!("{}.{}", chrono::Local::now().format("%Y-%m-%d_%H%M%S"), ext)
+/// `YYYY-MM-DD_HHMMSS` that no file in `dir` starts with yet (the second is bumped on collision),
+/// so notes saved in quick succession, such as a batch of dropped files, never overwrite each other.
+fn unique_timestamp_stem(dir: &std::path::Path) -> String {
+    let mut t = chrono::Local::now();
+    loop {
+        let stem = t.format("%Y-%m-%d_%H%M%S").to_string();
+        let taken = fs::read_dir(dir)
+            .map(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().starts_with(&stem)))
+            .unwrap_or(false);
+        if !taken {
+            return stem;
+        }
+        t += chrono::Duration::seconds(1);
+    }
 }
 
 /// Writes `data` to a temp file next to `path` and renames it over the target, so readers
@@ -1354,7 +1367,7 @@ fn save_note(app: AppHandle, project: String, content: String) -> Result<String,
     let clean = sanitize_name(&project)?;
     let dir = projects_root(&app)?.join(clean);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(timestamped_filename("md"));
+    let path = dir.join(format!("{}.md", unique_timestamp_stem(&dir)));
     atomic_write(&path, content.as_bytes())?;
     let _ = app.emit("notes-updated", ());
     Ok(path.to_string_lossy().to_string())
@@ -1366,7 +1379,7 @@ fn save_screenshot(app: AppHandle, project: String, png_base64: String) -> Resul
     let dir = projects_root(&app)?.join(clean);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let bytes = STANDARD.decode(png_base64).map_err(|e| e.to_string())?;
-    let path = dir.join(timestamped_filename("png"));
+    let path = dir.join(format!("{}.png", unique_timestamp_stem(&dir)));
     fs::write(&path, bytes).map_err(|e| e.to_string())?;
     let _ = app.emit("notes-updated", ());
     Ok(path.to_string_lossy().to_string())
@@ -1383,7 +1396,7 @@ fn save_capture(
     let dir = projects_root(&app)?.join(&clean);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    let now_ts = chrono::Local::now().format("%Y-%m-%d_%H%M%S").to_string();
+    let now_ts = unique_timestamp_stem(&dir);
     let imgs = images.unwrap_or_default();
     let has_image = !imgs.is_empty();
     let trimmed_text = text.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
@@ -2182,6 +2195,7 @@ pub fn run() {
             set_tray_language,
             get_startup_settings,
             set_startup_settings,
+            dropfile::read_dropped_file,
             bundle::export_project,
             bundle::inspect_bundle,
             bundle::import_bundle,
@@ -2319,6 +2333,27 @@ mod startup_settings_tests {
         assert_eq!(load_startup_settings(&dir), StartupSettings::default());
         fs::write(dir.join("startup-settings.json"), "{}").unwrap();
         assert!(load_startup_settings(&dir).start_hidden);
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod unique_name_tests {
+    use super::*;
+
+    #[test]
+    fn notes_saved_in_the_same_second_get_different_names() {
+        let dir = std::env::temp_dir().join(format!("mindpipe_names_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..5 {
+            let stem = unique_timestamp_stem(&dir);
+            assert!(seen.insert(stem.clone()), "duplicate stem {}", stem);
+            fs::write(dir.join(format!("{}.md", stem)), "x").unwrap();
+        }
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 5);
         let _ = fs::remove_dir_all(&dir);
     }
 }

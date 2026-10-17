@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createProject, listProjects, saveCapture } from "./lib/api";
 import { extractImageFromPasteEvent, stripDataUrlPrefix } from "./lib/clipboardImage";
+import { imageToPngDataUrl, listenForFileDrops, readDroppedFiles } from "./lib/dropFiles";
 import {
   applyTheme,
   getInitialLanguage,
@@ -192,6 +193,52 @@ export default function Capture() {
     }
   }
 
+  // Images dropped onto the capture bar are added like pasted screenshots (other files are ignored).
+  const [dropActive, setDropActive] = useState(false);
+  const dropHandlerRef = useRef<(paths: string[]) => void>(() => {});
+
+  async function handleFilesDropped(paths: string[]) {
+    if (isCreatingProject || paths.length === 0) return;
+    const { files } = await readDroppedFiles(paths);
+    const images = files.filter((f) => f.kind === "image");
+    if (images.length === 0) {
+      setStatus(t("dropImagesOnly"));
+      return;
+    }
+    const urls: string[] = [];
+    for (const img of images) {
+      try {
+        urls.push(await imageToPngDataUrl(img));
+      } catch {
+        // skip an image that cannot be decoded
+      }
+    }
+    if (urls.length > 0) {
+      setImages((prev) => [...prev, ...urls]);
+      setStatus(t("captureImageAdded"));
+      textareaRef.current?.focus();
+    }
+  }
+  dropHandlerRef.current = handleFilesDropped;
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listenForFileDrops({
+      onHover: setDropActive,
+      onDrop: (paths) => dropHandlerRef.current(paths),
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   function handleRemoveImage(index: number) {
     setImages((prev) => prev.filter((_, i) => i !== index));
     textareaRef.current?.focus();
@@ -199,6 +246,11 @@ export default function Capture() {
 
   return (
     <div className="capture">
+      {dropActive && (
+        <div className="capture__drop">
+          <span>{t("dropOverlayPipe")}</span>
+        </div>
+      )}
       <div className="capture__spine" />
       <div className="capture__body">
         <div className="capture__top">
