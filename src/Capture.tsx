@@ -31,6 +31,7 @@ function setStoredProject(p: string) {
 
 export default function Capture() {
   const [lang, setLang] = useState<Language>(getInitialLanguage);
+  const keepStateRef = useRef(false);
   const t = <K extends keyof typeof translations.tr>(key: K): (typeof translations.tr)[K] =>
     (translations[lang] as typeof translations.tr)[key];
   useEffect(() => {
@@ -110,7 +111,12 @@ export default function Capture() {
         applyTheme(getInitialTheme());
         setLang(getInitialLanguage());
         loadProjects();
-        reset();
+        // Focus gained right after a file drop must not wipe what was just dropped.
+        if (keepStateRef.current) {
+          keepStateRef.current = false;
+        } else {
+          reset();
+        }
         setTimeout(() => textareaRef.current?.focus(), 50);
       }
     });
@@ -199,6 +205,10 @@ export default function Capture() {
 
   async function handleFilesDropped(paths: string[]) {
     if (isCreatingProject || paths.length === 0) return;
+    // The bar was open but unfocused while a file was dragged over it: take focus so it stays open,
+    // and skip the usual "reset on focus" for this one focus event.
+    keepStateRef.current = true;
+    appWindow.setFocus().catch(() => {});
     const { files } = await readDroppedFiles(paths);
     const images = files.filter((f) => f.kind === "image");
     if (images.length === 0) {

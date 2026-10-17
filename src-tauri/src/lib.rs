@@ -1965,6 +1965,29 @@ fn update_capture_shortcut(app: AppHandle, new_shortcut: String) -> Result<Strin
     Ok(clean.to_string())
 }
 
+/// True while the primary mouse button is held down anywhere on screen (Windows only; elsewhere the
+/// capture bar keeps hiding as soon as it loses focus).
+#[cfg(windows)]
+fn left_mouse_button_down() -> bool {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetAsyncKeyState(v_key: i32) -> i16;
+    }
+    // VK_LBUTTON = 0x01; the high bit is set while the button is down.
+    unsafe { (GetAsyncKeyState(0x01) as u16) & 0x8000 != 0 }
+}
+
+#[cfg(not(windows))]
+fn left_mouse_button_down() -> bool {
+    false
+}
+
+/// Whether the capture bar should hide once the mouse button that was held when it lost focus is
+/// released. A file being dragged over the bar (or just dropped on it) keeps it open.
+fn should_hide_after_release(now_ms: u64, keep_open_until_ms: u64, window_focused: bool) -> bool {
+    !window_focused && now_ms >= keep_open_until_ms
+}
+
 fn toggle_capture_window(app: &AppHandle) {
     let Some(window) = app.get_webview_window("capture") else {
         return;
@@ -2035,14 +2058,42 @@ pub fn run() {
                 }
             }
 
-            // Capture window loses focus (user clicked away) -> dismiss it,
-            // same as pressing Escape.
+            // Capture window loses focus (user clicked away) -> dismiss it, same as pressing Escape.
+            // Exception: if the mouse button is held when focus is lost the user may be picking up a file
+            // elsewhere to drop it onto the bar, so wait for the release and keep the bar open when a
+            // drag is over it (or was just dropped on it).
             if let Some(capture) = handle.get_webview_window("capture") {
                 let capture_handle = capture.clone();
-                capture.on_window_event(move |event| {
-                    if let WindowEvent::Focused(false) = event {
-                        let _ = capture_handle.hide();
+                let epoch = std::time::Instant::now();
+                let keep_open_until = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+                capture.on_window_event(move |event| match event {
+                    WindowEvent::DragDrop(_) => {
+                        // Enter/Over/Drop/Leave all refresh a short keep-alive.
+                        let until = epoch.elapsed().as_millis() as u64 + 1500;
+                        keep_open_until.store(until, std::sync::atomic::Ordering::SeqCst);
                     }
+                    WindowEvent::Focused(false) => {
+                        if left_mouse_button_down() {
+                            let window = capture_handle.clone();
+                            let keep = keep_open_until.clone();
+                            std::thread::spawn(move || {
+                                let started = std::time::Instant::now();
+                                while left_mouse_button_down() && started.elapsed() < std::time::Duration::from_secs(15) {
+                                    std::thread::sleep(std::time::Duration::from_millis(25));
+                                }
+                                // Give the drop event a moment to arrive after the button is released.
+                                std::thread::sleep(std::time::Duration::from_millis(120));
+                                let now = epoch.elapsed().as_millis() as u64;
+                                let until = keep.load(std::sync::atomic::Ordering::SeqCst);
+                                if should_hide_after_release(now, until, window.is_focused().unwrap_or(false)) {
+                                    let _ = window.hide();
+                                }
+                            });
+                        } else {
+                            let _ = capture_handle.hide();
+                        }
+                    }
+                    _ => {}
                 });
             }
 
@@ -2355,5 +2406,22 @@ mod unique_name_tests {
         }
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 5);
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod capture_hold_tests {
+    use super::*;
+
+    #[test]
+    fn hides_after_release_unless_a_drag_is_over_the_bar_or_the_bar_is_focused() {
+        // nothing happened over the bar: hide
+        assert!(should_hide_after_release(5_000, 0, false));
+        // a drag/drop refreshed the keep-alive recently: stay open
+        assert!(!should_hide_after_release(5_000, 6_000, false));
+        // keep-alive expired: hide again
+        assert!(should_hide_after_release(7_000, 6_000, false));
+        // the bar regained focus (e.g. after a drop): never hide
+        assert!(!should_hide_after_release(5_000, 0, true));
     }
 }
