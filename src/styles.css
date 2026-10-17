@@ -4077,13 +4077,17 @@ body.is-reordering-cards * {
   opacity: 0.5;
 }
 
-.devlog-item--context .devlog-item__content {
-  max-height: 3.4em;
+/* Scoped with child combinators: the matching sub-note lives inside this card and must keep its own
+   "read more" and action buttons. */
+.devlog-item--context > .devlog-item__body .devlog-item__content {
+  max-height: 6.4em;
   overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 65%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 65%, transparent 100%);
 }
 
 .devlog-item--context > .devlog-item__divider,
-.devlog-item--context .devlog-item__actions {
+.devlog-item--context > .devlog-item__header .devlog-item__actions {
   display: none;
 }
 
