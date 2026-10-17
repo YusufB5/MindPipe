@@ -45,6 +45,13 @@ All data is stored directly on your local file system as plain Markdown (`.md`) 
   - Summon a minimalist capture bar from anywhere in the OS via a global hotkey.
   - Type quick thoughts or paste multiple screenshots directly from the clipboard (`Win+Shift+S` then `Ctrl+V`).
   - Shortcut is fully customizable (e.g. `Alt+Space`, `Ctrl+Alt+N`) and persists across reboots.
+  - Drop image files onto the capture bar. On Windows the bar stays open while you drag a file to it; on macOS and Linux it still closes when it loses focus, so drop there is not available.
+- **Drag & Drop Import:**
+  - Drop images onto the dashboard to open the note composer with them attached, or drop `.txt` / `.md` files to turn each one into a note.
+  - Safe by design: only real images and plain-text files are accepted (checked by content, not just extension), with size limits; anything else is skipped.
+- **Run at Startup (optional):**
+  - Settings → Startup: launch with the computer and start quietly in the tray, so the global shortcut and MCP connection are ready right after boot. Off by default.
+  - A second launch focuses the running instance instead of opening another one. Available in installed builds.
 - **Continuous DevLog Stream:**
   - Chronological activity feed with inline Markdown editing (`Ctrl+S`).
   - Pin important reference notes permanently to the top.
@@ -218,6 +225,13 @@ Tüm veriler doğrudan yerel dosya sisteminizde düz Markdown (`.md`) ve standar
   - İşletim sisteminin herhangi bir yerindeyken tek tuşla minimalist yakalama penceresini açın.
   - Hızlı notlar yazın veya panodaki ekran alıntılarını doğrudan yapıştırın (`Win+Shift+S` ardından `Ctrl+V`).
   - Global kısayol Ayarlar menüsünden tamamen özelleştirilebilir (`Alt+Space`, `Ctrl+Alt+N` vb.).
+  - Görsel dosyalarını yakalama çubuğuna bırakın. Windows'ta bir dosyayı çubuğa sürüklerken çubuk açık kalır; macOS ve Linux'ta çubuk odağı kaybedince kapanmaya devam ettiği için orada bırakma kullanılamaz.
+- **Sürükle-Bırak ile İçe Aktarma:**
+  - Görselleri panoya bırakınca not yazma kutusu görsellerle açılır; `.txt` / `.md` dosyalarını bırakınca her biri ayrı not olur.
+  - Güvenli tasarım: yalnızca gerçek görseller ve düz metin dosyaları kabul edilir (uzantıya değil içeriğe bakılır), boyut sınırları vardır; diğer her şey atlanır.
+- **Açılışta Başlatma (isteğe bağlı):**
+  - Ayarlar → Başlangıç: bilgisayarla birlikte başlatın ve tepsiye sessizce açın; böylece global kısayol ve MCP bağlantısı açılışta hazır olur. Varsayılan olarak kapalıdır.
+  - İkinci kez açmaya çalışmak yeni kopya açmaz, çalışan pencereyi öne getirir. Kurulu sürümlerde kullanılabilir.
 - **DevLog Sürekli Akışı:**
   - Kronolojik not akışı ve satır içi anlık Markdown düzenleme (`Ctrl+S`).
   - Önemli notları ve yönergeleri en üstte sabitleme (pin) desteği.
