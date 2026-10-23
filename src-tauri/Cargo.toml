@@ -1,6 +1,6 @@
 [package]
 name = "mindpipe"
-version = "0.3.0"
+version = "0.3.1"
 description = "MindPipe - Visual Knowledge & AI Context Hub"
 edition = "2021"
 
