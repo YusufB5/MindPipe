@@ -263,6 +263,7 @@ export const translations = {
       ]
         .filter(Boolean)
         .join(", "),
+    mcpNoClientHint: "Henüz algılanmış bir AI istemcisi yok (bu izin yine de geçerlidir).",
     addSubNote: "+ Alt not",
     addSubNoteTitle: "Bu notun altına yeni bir alt not ekle",
     subNoteOf: "Alt not:",
@@ -538,6 +539,7 @@ export const translations = {
       ]
         .filter(Boolean)
         .join(", "),
+    mcpNoClientHint: "No AI client detected yet (this permission still applies).",
     addSubNote: "+ Sub-note",
     addSubNoteTitle: "Add a new sub-note under this note",
     subNoteOf: "Sub-note of:",

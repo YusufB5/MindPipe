@@ -1713,6 +1713,7 @@ fn get_mcp_status(app: AppHandle) -> Result<McpStatus, String> {
             if let Ok(session) = serde_json::from_str::<McpSessionInfo>(&content) {
                 if let Some(c) = session.client {
                     if !c.trim().is_empty() && c != "AI Client" {
+                        is_configured = true;
                         let name_lower = c.to_lowercase();
                         if name_lower.contains("claude") {
                             detected_client = Some("Claude Desktop".into());

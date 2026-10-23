@@ -355,7 +355,9 @@ export default function Dashboard() {
   }
 
   function isProjectMcpAllowed(projectName: string) {
-    if (!mcpStatus || !mcpStatus.isConfigured) return false;
+    // The permission is a policy stored in mcp-permissions.json and enforced by the MCP server, so it
+    // applies whether or not an AI client has been detected on this computer.
+    if (!mcpStatus) return true;
     const clean = projectName.toLowerCase();
     if (mcpStatus.blockedProjects?.some((p) => p.toLowerCase() === clean)) {
       return false;
@@ -1488,7 +1490,7 @@ export default function Dashboard() {
                 onClick={() => setActive(p)}
               >
                 <div className="dashboard__project-info">
-                  {mcpStatus?.isConfigured && (
+                  {mcpStatus && (
                     <button
                       type="button"
                       className={`dashboard__project-mcp-btn ${
@@ -1499,13 +1501,13 @@ export default function Dashboard() {
                           : "dashboard__project-mcp-btn--ready"
                       }`}
                       onClick={(e) => handleToggleProjectMcp(p, e)}
-                      title={
+                      title={(mcpStatus.isConfigured ? "" : `${t("mcpNoClientHint")}\n`) + (
                         !isAllowed
                           ? (lang === "tr" ? "AI Erişimi: KAPALI (Engellendi)\nTıklayarak AI erişimini TEKRAR AÇABİLİRSİNİZ." : "AI Access: OFF (Blocked)\nClick to ALLOW AI access.")
                           : mcpStatus.isLiveProcessing
                           ? (lang === "tr" ? `AI Aktif İşlem Yapıyor: ${mcpStatus.detectedClient || "AI"}\n(Tıkla: Bu projenin AI erişimini KAPAT)` : `AI Actively Processing: ${mcpStatus.detectedClient || "AI"}\n(Click to BLOCK AI access)`)
                           : (lang === "tr" ? `AI Erişimi Açık (Hazır / Beklemede - ${mcpStatus.detectedClient || "AI"})\n(Tıkla: Bu projenin AI erişimini KAPAT)` : `AI Access Allowed (Ready / Idle - ${mcpStatus.detectedClient || "AI"})\n(Click to BLOCK AI access)`)
-                      }
+                      )}
                       aria-label={t("projectAiAccess")(p)}
                     >
                       <span className="dashboard__project-mcp-dot" />
