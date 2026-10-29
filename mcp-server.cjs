@@ -308,9 +308,39 @@ function normalizeTags(tags) {
   return [...new Set(tags.map((t) => String(t).trim()).filter(Boolean))];
 }
 
+// Keeps the project's tag set from sprawling: a tag that differs from an existing one only by
+// case/whitespace reuses the existing spelling, and a note carries at most MAX_TAGS_PER_NOTE tags.
+const MAX_TAGS_PER_NOTE = 3;
+
+function canonicalizeTags(store, tags) {
+  const byLower = new Map(Object.keys(store.definitions).map((t) => [t.toLowerCase(), t]));
+  const out = [];
+  const created = [];
+  for (const raw of normalizeTags(tags)) {
+    const name = raw.replace(/\s+/g, " ");
+    const existing = byLower.get(name.toLowerCase());
+    const tag = existing || name;
+    if (out.includes(tag)) continue;
+    out.push(tag);
+    if (!existing) {
+      created.push(tag);
+      byLower.set(name.toLowerCase(), tag);
+    }
+  }
+  const kept = out.slice(0, MAX_TAGS_PER_NOTE);
+  return { tags: kept, created: created.filter((t) => kept.includes(t)), dropped: out.slice(MAX_TAGS_PER_NOTE) };
+}
+
+function describeTagOutcome(res) {
+  let msg = "";
+  if (res.created && res.created.length) msg += ` Yeni etiket oluşturuldu: [${res.created.join(", ")}] — mevcut bir etiket uyuyorsa onu kullan.`;
+  if (res.dropped && res.dropped.length) msg += ` Not başına en fazla ${MAX_TAGS_PER_NOTE} etiket var, atlanan: [${res.dropped.join(", ")}].`;
+  return msg;
+}
+
 function _applyTags(dir, fileName, tags) {
-  const clean = normalizeTags(tags);
   const store = readTagStore(dir);
+  const { tags: clean, created, dropped } = canonicalizeTags(store, tags);
   const key = noteKey(fileName);
   if (clean.length === 0) {
     delete store.entries[key];
@@ -324,7 +354,7 @@ function _applyTags(dir, fileName, tags) {
     }
   }
   writeTagStore(dir, store);
-  return clean;
+  return { tags: clean, created, dropped };
 }
 
 function setNoteTags(projectName, noteName, tags) {
@@ -345,7 +375,7 @@ function setNoteTags(projectName, noteName, tags) {
     throw new Error(`"${noteName}" adlı not bulunamadı.`);
   }
   const applied = applyTags(dir, match, tags);
-  return { success: true, file: match, project: clean, tags: applied };
+  return { success: true, file: match, project: clean, tags: applied.tags, created: applied.created, dropped: applied.dropped };
 }
 
 function tagSuffix(tags) {
@@ -485,7 +515,11 @@ function listNotes(projectName, tagFilter, limit, parentName) {
   const total = items.length;
   if (Number(limit) > 0) items = items.slice(0, Number(limit));
   items = items.map(({ key, ...rest }) => rest);
-  return { project: clean, total, returned: items.length, notes: items };
+  const tagCounts = {};
+  for (const tags of Object.values(tagStore.entries)) {
+    for (const t of tags) tagCounts[t] = (tagCounts[t] || 0) + 1;
+  }
+  return { project: clean, total, returned: items.length, notes: items, tagCounts };
 }
 
 function setNoteParent(projectName, noteName, parentName) {
@@ -504,6 +538,8 @@ function formatNoteList(res) {
     return `${pad(t.getDate())}.${pad(t.getMonth() + 1)} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
   };
   const lines = [`${res.project}: ${res.returned}/${res.total} not (kr=karakter, 📌 sabitli, ↳ alt not, ↑ üst not)`];
+  const tagList = Object.entries(res.tagCounts || {}).sort((a, b) => b[1] - a[1]);
+  if (tagList.length) lines.push(`Mevcut etiketler (yeni not eklerken önce bunlardan seç): ${tagList.map(([t, c]) => `${t}(${c})`).join(", ")}`);
   for (const n of res.notes) {
     let line = `${n.pinned ? "📌 " : ""}${n.file} · ${n.title}`;
     if (n.summary) line += ` — ${n.summary.slice(0, 90)}`;
@@ -733,26 +769,36 @@ function addProjectNote(projectName, content, tags, parentName) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  // Name ends with _ai.md so UI & backend recognize it as an AI-generated note
-  const fileName = `${ts}_ai.md`;
-  const filePath = path.join(dir, fileName);
-
-  atomicWriteFileSync(filePath, content.trim());
-  const appliedTags = normalizeTags(tags).length > 0 ? applyTags(dir, fileName, tags) : [];
-  let parent = null;
-  if (parentName) {
-    try {
-      parent = findNoteFile(dir, parentName);
-      linkParent(dir, fileName, parent);
-    } catch (e) {
-      // Keep the note even if the hierarchy link is invalid; report it in the result.
-      return { success: true, file: fileName, project: clean, tags: appliedTags, parent: null, parentError: e.message };
+  return withProjectLock(dir, () => {
+    // Name ends with _ai.md so UI & backend recognize it as an AI-generated note.
+    // The note key is the timestamp (to the second), so on a collision the second is bumped
+    // (as unique_timestamp_stem does in the app) instead of overwriting the earlier note.
+    const pad = (n) => String(n).padStart(2, "0");
+    const taken = fs.readdirSync(dir);
+    const t = new Date();
+    let ts;
+    for (;;) {
+      ts = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}_${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}`;
+      if (!taken.some((f) => f.startsWith(ts))) break;
+      t.setSeconds(t.getSeconds() + 1);
     }
-  }
-  return { success: true, file: fileName, project: clean, tags: appliedTags, parent };
+    const fileName = `${ts}_ai.md`;
+
+    atomicWriteFileSync(path.join(dir, fileName), content.trim());
+    const applied = normalizeTags(tags).length > 0 ? applyTags(dir, fileName, tags) : { tags: [], created: [], dropped: [] };
+    const result = { success: true, file: fileName, project: clean, tags: applied.tags, created: applied.created, dropped: applied.dropped, parent: null };
+    if (parentName) {
+      try {
+        result.parent = findNoteFile(dir, parentName);
+        linkParent(dir, fileName, result.parent);
+      } catch (e) {
+        // Keep the note even if the hierarchy link is invalid; report it in the result.
+        result.parent = null;
+        result.parentError = e.message;
+      }
+    }
+    return result;
+  });
 }
 
 function _editProjectNote(projectName, noteName, content, expectedVersion) {
@@ -1104,7 +1150,7 @@ const TOOLS = [
       properties: {
         project: { type: "string", description: "Notun kaydedileceği proje adı" },
         content: { type: "string", description: "Not içeriği (Markdown formatında)" },
-        tags: { type: "array", items: { type: "string" }, description: "İsteğe bağlı etiketler (örn: ['karar', 'bug'])" },
+        tags: { type: "array", items: { type: "string" }, description: "İsteğe bağlı etiketler (en fazla 3). Önce notes_list_notes ile projenin mevcut etiketlerine bak ve uyanı kullan; yalnızca gerçekten gerekirse yeni etiket aç. Büyük/küçük harf farkı mevcut etikete eşlenir." },
         parent: { type: "string", description: "İsteğe bağlı: yeni notu bu notun (dosya adı/başlangıcı) alt notu olarak ekle (tek seviye)" },
       },
       required: ["project", "content"],
@@ -1125,7 +1171,7 @@ const TOOLS = [
   },
   {
     name: "notes_set_tags",
-    description: "Bir notun etiketlerini tamamen değiştirir (boş liste etiketleri kaldırır). Etiket renkleri otomatik atanır; hem AI hem kullanıcı notlarına uygulanabilir.",
+    description: "Bir notun etiketlerini tamamen değiştirir (boş liste etiketleri kaldırır). Etiket renkleri otomatik atanır; hem AI hem kullanıcı notlarına uygulanabilir. Not başına en fazla 3 etiket; önce notes_list_notes ile mevcut etiketlere bak, gerekmedikçe yeni etiket açma.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1308,7 +1354,7 @@ function logMcpActivity(toolName, project, details) {
       } else if (name === "notes_add_note") {
         const res = addProjectNote(args.project, args.content, args.tags, args.parent);
         logMcpActivity("notes_add_note", args.project, { tr: `Yeni not oluşturdu: ${res.file}${res.tags.length ? ` [${res.tags.join(", ")}]` : ""}${res.parent ? ` (alt not: ${res.parent})` : ""}`, en: `Created note: ${res.file}${res.tags.length ? ` [${res.tags.join(", ")}]` : ""}${res.parent ? ` (sub-note of: ${res.parent})` : ""}` });
-        respond({ content: [{ type: "text", text: `Not başarıyla eklendi: ${res.file}${res.parent ? ` (üst not: ${res.parent})` : ""}${res.parentError ? ` — uyarı: üst not bağlanamadı: ${res.parentError}` : ""}` }] });
+        respond({ content: [{ type: "text", text: `Not başarıyla eklendi: ${res.file}${res.parent ? ` (üst not: ${res.parent})` : ""}${res.parentError ? ` — uyarı: üst not bağlanamadı: ${res.parentError}` : ""}${describeTagOutcome(res)}` }] });
       } else if (name === "notes_set_parent") {
         const res = setNoteParent(args.project, args.noteName, args.parent);
         logMcpActivity("notes_set_parent", args.project, res.parent ? { tr: `${res.file} -> alt not: ${res.parent}`, en: `${res.file} -> sub-note of: ${res.parent}` } : { tr: `${res.file} üst seviyeye çıkarıldı`, en: `${res.file} moved to top level` });
@@ -1316,7 +1362,7 @@ function logMcpActivity(toolName, project, details) {
       } else if (name === "notes_set_tags") {
         const res = setNoteTags(args.project, args.noteName, args.tags);
         logMcpActivity("notes_set_tags", args.project, { tr: `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]`, en: `Tags updated: ${res.file} -> [${res.tags.join(", ")}]` });
-        respond({ content: [{ type: "text", text: `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]` }] });
+        respond({ content: [{ type: "text", text: `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]${describeTagOutcome(res)}` }] });
       } else if (name === "notes_edit_note") {
         const res = editProjectNote(args.project, args.noteName, args.content, args.expected_version);
         logMcpActivity("notes_edit_note", args.project, { tr: `Not güncellendi: ${res.file}`, en: `Note updated: ${res.file}` });
