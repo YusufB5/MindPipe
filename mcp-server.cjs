@@ -331,6 +331,21 @@ function canonicalizeTags(store, tags) {
   return { tags: kept, created: created.filter((t) => kept.includes(t)), dropped: out.slice(MAX_TAGS_PER_NOTE) };
 }
 
+// "Mevcut etiketler: karar(2), bug(1)" for the project, so an agent sees the vocabulary on every write.
+function existingTagsHint(projectName) {
+  try {
+    const { dir } = accessibleDir(projectName);
+    const counts = {};
+    for (const tags of Object.values(readTagStore(dir).entries)) {
+      for (const t of tags) counts[t] = (counts[t] || 0) + 1;
+    }
+    const list = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return list.length ? ` Projedeki etiketler: ${list.map(([t, c]) => `${t}(${c})`).join(", ")}.` : "";
+  } catch {
+    return "";
+  }
+}
+
 function describeTagOutcome(res) {
   let msg = "";
   if (res.created && res.created.length) msg += ` Yeni etiket oluşturuldu: [${res.created.join(", ")}] — mevcut bir etiket uyuyorsa onu kullan.`;
@@ -1150,7 +1165,7 @@ const TOOLS = [
       properties: {
         project: { type: "string", description: "Notun kaydedileceği proje adı" },
         content: { type: "string", description: "Not içeriği (Markdown formatında)" },
-        tags: { type: "array", items: { type: "string" }, description: "İsteğe bağlı etiketler (en fazla 3). Önce notes_list_notes ile projenin mevcut etiketlerine bak ve uyanı kullan; yalnızca gerçekten gerekirse yeni etiket aç. Büyük/küçük harf farkı mevcut etikete eşlenir." },
+        tags: { type: "array", items: { type: "string" }, description: "İsteğe bağlı etiketler (en fazla 3). Etiket notun TÜRÜNÜ belirtir (örn: karar, bug, fikir, görev), konusunu değil; konu zaten proje adında ve başlıktadır. Kısa, tek kelime, küçük harf. Önce notes_list_notes ile projenin mevcut etiketlerine bak ve uyanı kullan; yalnızca gerçekten gerekirse yeni etiket aç. Büyük/küçük harf farkı mevcut etikete eşlenir." },
         parent: { type: "string", description: "İsteğe bağlı: yeni notu bu notun (dosya adı/başlangıcı) alt notu olarak ekle (tek seviye)" },
       },
       required: ["project", "content"],
@@ -1171,7 +1186,7 @@ const TOOLS = [
   },
   {
     name: "notes_set_tags",
-    description: "Bir notun etiketlerini tamamen değiştirir (boş liste etiketleri kaldırır). Etiket renkleri otomatik atanır; hem AI hem kullanıcı notlarına uygulanabilir. Not başına en fazla 3 etiket; önce notes_list_notes ile mevcut etiketlere bak, gerekmedikçe yeni etiket açma.",
+    description: "Bir notun etiketlerini tamamen değiştirir (boş liste etiketleri kaldırır). Etiket renkleri otomatik atanır; hem AI hem kullanıcı notlarına uygulanabilir. Not başına en fazla 3 etiket. Etiket notun türünü belirtir (karar, bug, fikir…), konusunu değil; kısa, tek kelime, küçük harf. Önce notes_list_notes ile mevcut etiketlere bak, gerekmedikçe yeni etiket açma.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1354,7 +1369,7 @@ function logMcpActivity(toolName, project, details) {
       } else if (name === "notes_add_note") {
         const res = addProjectNote(args.project, args.content, args.tags, args.parent);
         logMcpActivity("notes_add_note", args.project, { tr: `Yeni not oluşturdu: ${res.file}${res.tags.length ? ` [${res.tags.join(", ")}]` : ""}${res.parent ? ` (alt not: ${res.parent})` : ""}`, en: `Created note: ${res.file}${res.tags.length ? ` [${res.tags.join(", ")}]` : ""}${res.parent ? ` (sub-note of: ${res.parent})` : ""}` });
-        respond({ content: [{ type: "text", text: `Not başarıyla eklendi: ${res.file}${res.parent ? ` (üst not: ${res.parent})` : ""}${res.parentError ? ` — uyarı: üst not bağlanamadı: ${res.parentError}` : ""}${describeTagOutcome(res)}` }] });
+        respond({ content: [{ type: "text", text: `Not başarıyla eklendi: ${res.file}${res.parent ? ` (üst not: ${res.parent})` : ""}${res.parentError ? ` — uyarı: üst not bağlanamadı: ${res.parentError}` : ""}${describeTagOutcome(res)}${existingTagsHint(args.project)}` }] });
       } else if (name === "notes_set_parent") {
         const res = setNoteParent(args.project, args.noteName, args.parent);
         logMcpActivity("notes_set_parent", args.project, res.parent ? { tr: `${res.file} -> alt not: ${res.parent}`, en: `${res.file} -> sub-note of: ${res.parent}` } : { tr: `${res.file} üst seviyeye çıkarıldı`, en: `${res.file} moved to top level` });
@@ -1362,7 +1377,7 @@ function logMcpActivity(toolName, project, details) {
       } else if (name === "notes_set_tags") {
         const res = setNoteTags(args.project, args.noteName, args.tags);
         logMcpActivity("notes_set_tags", args.project, { tr: `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]`, en: `Tags updated: ${res.file} -> [${res.tags.join(", ")}]` });
-        respond({ content: [{ type: "text", text: `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]${describeTagOutcome(res)}` }] });
+        respond({ content: [{ type: "text", text: `Etiketler güncellendi: ${res.file} -> [${res.tags.join(", ")}]${describeTagOutcome(res)}${existingTagsHint(args.project)}` }] });
       } else if (name === "notes_edit_note") {
         const res = editProjectNote(args.project, args.noteName, args.content, args.expected_version);
         logMcpActivity("notes_edit_note", args.project, { tr: `Not güncellendi: ${res.file}`, en: `Note updated: ${res.file}` });
