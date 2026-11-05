@@ -47,6 +47,17 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Read release notes
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'body<<NOTES_EOF'
+            cat RELEASE_NOTES.md
+            echo
+            echo 'NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and Publish Tauri App
         uses: tauri-apps/tauri-action@v1
         env:
@@ -54,7 +65,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: 'MindPipe v__VERSION__'
-          releaseBody: 'See the assets below to download and install MindPipe for Windows, macOS, or Linux.'
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

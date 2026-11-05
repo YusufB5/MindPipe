@@ -67,6 +67,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   checkForUpdate,
+  formatReleaseNotes,
+  RECHECK_INTERVAL_MS,
   isUpdateCheckEnabled,
   setUpdateCheckEnabled,
   skipUpdateVersion,
@@ -186,18 +188,29 @@ export default function Dashboard() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateCheckOn, setUpdateCheckOn] = useState(isUpdateCheckEnabled);
 
+  // Version the user chose "Later" for; not shown again until the app restarts.
+  const dismissedUpdateRef = useRef<string | null>(null);
+
+  // Check at startup, then re-evaluate hourly so a long-running app (tray/autostart) still notices
+  // new releases. checkForUpdate caches, so GitHub itself is only contacted once per cache window.
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
     getVersion()
-      .then(async (v) => {
+      .then((v) => {
         if (cancelled) return;
         setAppVersion(v);
-        const info = await checkForUpdate(v);
-        if (!cancelled) setUpdateInfo(info);
+        const run = async () => {
+          const info = await checkForUpdate(v);
+          if (!cancelled && info && info.version !== dismissedUpdateRef.current) setUpdateInfo(info);
+        };
+        run();
+        timer = setInterval(run, RECHECK_INTERVAL_MS);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
+      if (timer) clearInterval(timer);
     };
   }, []);
 
@@ -3469,17 +3482,38 @@ export default function Dashboard() {
           <span className="update-notice__text">
             {t("updateAvailable")} <strong>v{updateInfo.version}</strong>
           </span>
+          {(() => {
+            const noteLines = formatReleaseNotes(updateInfo.notes);
+            return noteLines.length > 0 ? (
+              <div className="update-notice__notes">
+                <span className="update-notice__notes-title">{t("updateWhatsNew")}</span>
+                {noteLines.map((line, i) => (
+                  <p key={i} className={line.bullet ? "update-notice__note update-notice__note--bullet" : "update-notice__note"}>
+                    {line.text}
+                  </p>
+                ))}
+              </div>
+            ) : null;
+          })()}
           <button
             type="button"
             className="btn btn--primary"
             onClick={() => {
               openUpdatePage(updateInfo.url);
+              dismissedUpdateRef.current = updateInfo.version;
               setUpdateInfo(null);
             }}
           >
             {t("updateOpen")}
           </button>
-          <button type="button" className="btn btn--secondary" onClick={() => setUpdateInfo(null)}>
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={() => {
+              dismissedUpdateRef.current = updateInfo.version;
+              setUpdateInfo(null);
+            }}
+          >
             {t("updateLater")}
           </button>
           <button
