@@ -64,6 +64,14 @@ import {
 import { imageToPngDataUrl, listenForFileDrops, readDroppedFiles } from "./lib/dropFiles";
 import { extractImageFromPasteEvent, stripDataUrlPrefix } from "./lib/clipboardImage";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { getVersion } from "@tauri-apps/api/app";
+import {
+  checkForUpdate,
+  isUpdateCheckEnabled,
+  setUpdateCheckEnabled,
+  skipUpdateVersion,
+  type UpdateInfo,
+} from "./lib/updateCheck";
 import {
   type Language,
   type ThemeId,
@@ -172,6 +180,40 @@ export default function Dashboard() {
 
   // Startup (launch at login) settings
   const [startup, setStartup] = useState<StartupStatus>({ enabled: false, startHidden: true, supported: true });
+
+  // Update notice (GitHub release check; notice only, no auto-install)
+  const [appVersion, setAppVersion] = useState("");
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateCheckOn, setUpdateCheckOn] = useState(isUpdateCheckEnabled);
+
+  useEffect(() => {
+    let cancelled = false;
+    getVersion()
+      .then(async (v) => {
+        if (cancelled) return;
+        setAppVersion(v);
+        const info = await checkForUpdate(v);
+        if (!cancelled) setUpdateInfo(info);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function handleUpdateCheckToggle(enabled: boolean) {
+    setUpdateCheckOn(enabled);
+    setUpdateCheckEnabled(enabled);
+    if (!enabled) setUpdateInfo(null);
+  }
+
+  async function openUpdatePage(url: string) {
+    try {
+      await openUrl(url);
+    } catch {
+      window.open(url, "_blank");
+    }
+  }
 
   // Share / import between devices
   const [shareOpen, setShareOpen] = useState(false);
@@ -3363,8 +3405,19 @@ export default function Dashboard() {
                     Mind<span>Pipe</span>
                   </div>
                   <p className="about-desc">{t("aboutDesc")}</p>
+                  <label className="settings-toggle">
+                    <input
+                      type="checkbox"
+                      checked={updateCheckOn}
+                      onChange={(e) => handleUpdateCheckToggle(e.target.checked)}
+                    />
+                    <span className="settings-card__info">
+                      <span className="settings-card__title">{t("updateCheckEnable")}</span>
+                      <span className="settings-card__desc">{t("updateCheckEnableDesc")}</span>
+                    </span>
+                  </label>
                   <div className="about-meta">
-                    <span className="about-meta__item">{t("versionLabel")}: <strong>v0.1.0</strong></span>
+                    <span className="about-meta__item">{t("versionLabel")}: <strong>{appVersion ? `v${appVersion}` : "—"}</strong></span>
                     <span className="about-meta__item">{t("licenseLabel")}: <strong>MIT</strong></span>
                   </div>
                   <button
@@ -3410,6 +3463,37 @@ export default function Dashboard() {
         </div>
       )}
       {dropToast && <div className="drop-toast">{dropToast}</div>}
+
+      {updateInfo && (
+        <div className="update-notice" role="status">
+          <span className="update-notice__text">
+            {t("updateAvailable")} <strong>v{updateInfo.version}</strong>
+          </span>
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => {
+              openUpdatePage(updateInfo.url);
+              setUpdateInfo(null);
+            }}
+          >
+            {t("updateOpen")}
+          </button>
+          <button type="button" className="btn btn--secondary" onClick={() => setUpdateInfo(null)}>
+            {t("updateLater")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={() => {
+              skipUpdateVersion(updateInfo.version);
+              setUpdateInfo(null);
+            }}
+          >
+            {t("updateSkip")}
+          </button>
+        </div>
+      )}
 
       {/* Share / Import Modal */}
       {shareOpen && (
