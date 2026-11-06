@@ -1,3 +1,2 @@
-- Update check now also runs while the app stays open (re-checked hourly, GitHub is contacted at most every 12 hours).
-- The update notice lists what changed in the new version before you download it.
-- Release notes for each version are written in RELEASE_NOTES.md and published with the GitHub release.
+- The update notice now lists what changed in the new version before you download it.
+- Update checks also run while the app stays open (GitHub is contacted at most every 12 hours), so a long-running app still notices new releases.
