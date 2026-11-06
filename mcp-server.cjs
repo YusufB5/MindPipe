@@ -382,13 +382,7 @@ function setNoteTags(projectName, noteName, tags) {
     throw new Error(`"${clean}" projesi bulunamadı.`);
   }
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".md") && !f.startsWith("."));
-  const match =
-    files.find((f) => f === noteName) ||
-    files.find((f) => f === `${noteName}.md`) ||
-    files.find((f) => f.startsWith(noteName));
-  if (!match) {
-    throw new Error(`"${noteName}" adlı not bulunamadı.`);
-  }
+  const match = pickNote(files, noteName, `"${noteName}" adlı not bulunamadı.`);
   const applied = applyTags(dir, match, tags);
   return { success: true, file: match, project: clean, tags: applied.tags, created: applied.created, dropped: applied.dropped };
 }
@@ -453,14 +447,23 @@ function accessibleDir(projectName) {
   return { clean, dir };
 }
 
+// Exact name wins; otherwise a prefix must identify exactly one file. An ambiguous prefix is an
+// error that lists the candidates, so a read/write never lands on a silently chosen note.
+function pickNote(files, noteName, notFoundMessage) {
+  const exact = files.find((f) => f === noteName || f === `${noteName}.md`);
+  if (exact) return exact;
+  const matches = files.filter((f) => f.startsWith(noteName));
+  if (matches.length === 0) throw new Error(notFoundMessage);
+  if (matches.length > 1) {
+    const shown = matches.slice(0, 5).join(", ");
+    throw new Error(`"${noteName}" birden fazla nota uyuyor (${matches.length}): ${shown}${matches.length > 5 ? ", ..." : ""}. Tam dosya adını kullan.`);
+  }
+  return matches[0];
+}
+
 function findNoteFile(dir, noteName) {
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "todos.md" && !f.startsWith("."));
-  const match =
-    files.find((f) => f === noteName) ||
-    files.find((f) => f === `${noteName}.md`) ||
-    files.find((f) => f.startsWith(noteName));
-  if (!match) throw new Error(`"${noteName}" adlı not bulunamadı.`);
-  return match;
+  return pickNote(files, noteName, `"${noteName}" adlı not bulunamadı.`);
 }
 
 function readPinnedIds(dir) {
@@ -831,12 +834,7 @@ function _editProjectNote(projectName, noteName, content, expectedVersion) {
   let targetFile = noteName;
   if (!fs.existsSync(path.join(dir, targetFile))) {
     const files = fs.readdirSync(dir).filter((f) => f.endsWith(".md") && !f.startsWith("."));
-    const match = files.find((f) => f === noteName || f === `${noteName}.md` || f.startsWith(noteName));
-    if (match) {
-      targetFile = match;
-    } else {
-      throw new Error(`"${noteName}" adlı not bulunamadı.`);
-    }
+    targetFile = pickNote(files, noteName, `"${noteName}" adlı not bulunamadı.`);
   }
 
   if (!canAiEdit(clean, targetFile)) {
@@ -907,12 +905,7 @@ function deleteProjectNote(projectName, noteName) {
   let targetFile = noteName;
   if (!fs.existsSync(path.join(dir, targetFile))) {
     const files = fs.readdirSync(dir).filter((f) => !f.startsWith("."));
-    const match = files.find((f) => f === noteName || f === `${noteName}.md` || f.startsWith(noteName));
-    if (match) {
-      targetFile = match;
-    } else {
-      throw new Error(`"${noteName}" adlı dosya bulunamadı.`);
-    }
+    targetFile = pickNote(files, noteName, `"${noteName}" adlı dosya bulunamadı.`);
   }
 
   if (!canAiDelete(clean, targetFile)) {
@@ -1083,7 +1076,7 @@ const TOOLS = [
   },
   {
     name: "notes_list_notes",
-    description: "Projedeki notların hafif dizinini döner, not başına tek satır: dosya adı · başlık — kısa özet [etiketler] · karakter sayısı · tarih. 📌=sabitli, ↳=alt not, ↑=üst not. Tam içerik yok (token dostu). Sabitliler önce, sonra en yeni. 'tag' ve 'limit' ile daraltılabilir; 'limit' ile son değişen notları almak için kullan. Tam içerik için notes_read_note.",
+    description: "Projedeki notların hafif dizinini döner, not başına tek satır: dosya adı · başlık — kısa özet [etiketler] · karakter sayısı · tarih. 📌=sabitli, ↳=alt not, ↑=üst not. Tam içerik yok (token dostu). Sabitliler önce, sonra en yeni. 'tag' ve 'limit' ile daraltılabilir; 'limit' ilk N notu döner (sabitliler önce, sonra en yeni). Tam içerik için notes_read_note.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1165,7 +1158,7 @@ const TOOLS = [
       properties: {
         project: { type: "string", description: "Notun kaydedileceği proje adı" },
         content: { type: "string", description: "Not içeriği (Markdown formatında)" },
-        tags: { type: "array", items: { type: "string" }, description: "İsteğe bağlı etiketler (en fazla 3). Etiket notun TÜRÜNÜ belirtir (örn: karar, bug, fikir, görev), konusunu değil; konu zaten proje adında ve başlıktadır. Kısa, tek kelime, küçük harf. Önce notes_list_notes ile projenin mevcut etiketlerine bak ve uyanı kullan; yalnızca gerçekten gerekirse yeni etiket aç. Büyük/küçük harf farkı mevcut etikete eşlenir." },
+        tags: { type: "array", items: { type: "string" }, description: "İsteğe bağlı etiketler (en fazla 3; fazlası kaydedilmez, cevapta uyarılır). Etiket notun TÜRÜNÜ belirtir (örn: karar, bug, fikir, görev), konusunu değil; konu zaten proje adında ve başlıktadır. Kısa, tek kelime, küçük harf. Önce notes_list_notes ile projenin mevcut etiketlerine bak ve uyanı kullan; yalnızca gerçekten gerekirse yeni etiket aç. Büyük/küçük harf farkı mevcut etikete eşlenir." },
         parent: { type: "string", description: "İsteğe bağlı: yeni notu bu notun (dosya adı/başlangıcı) alt notu olarak ekle (tek seviye)" },
       },
       required: ["project", "content"],
@@ -1186,7 +1179,7 @@ const TOOLS = [
   },
   {
     name: "notes_set_tags",
-    description: "Bir notun etiketlerini tamamen değiştirir (boş liste etiketleri kaldırır). Etiket renkleri otomatik atanır; hem AI hem kullanıcı notlarına uygulanabilir. Not başına en fazla 3 etiket. Etiket notun türünü belirtir (karar, bug, fikir…), konusunu değil; kısa, tek kelime, küçük harf. Önce notes_list_notes ile mevcut etiketlere bak, gerekmedikçe yeni etiket açma.",
+    description: "Bir notun etiketlerini tamamen değiştirir (boş liste etiketleri kaldırır). Etiket renkleri otomatik atanır; hem AI hem kullanıcı notlarına uygulanabilir. Not başına en fazla 3 etiket (fazlası kaydedilmez, cevapta uyarılır). Etiket notun türünü belirtir (karar, bug, fikir…), konusunu değil; kısa, tek kelime, küçük harf. Önce notes_list_notes ile mevcut etiketlere bak, gerekmedikçe yeni etiket açma.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1204,7 +1197,7 @@ const TOOLS = [
       type: "object",
       properties: {
         project: { type: "string", description: "Proje adı" },
-        noteName: { type: "string", description: "Düzenlenecek notun dosya adı veya başlığı" },
+        noteName: { type: "string", description: "Düzenlenecek notun dosya adı veya benzersiz başlangıcı (birden fazla nota uyan önek hata verir)" },
         content: { type: "string", description: "Yeni not içeriği (Markdown)" },
         expected_version: { type: "string", description: "Önerilir: notes_read_note'tan aldığın 'sürüm' değeri. Not bu arada değiştiyse düzenleme yazılmaz ve güncel içerik döner (başkasının değişikliğini ezmemek için)." },
       },
