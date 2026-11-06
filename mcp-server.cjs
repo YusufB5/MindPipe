@@ -984,8 +984,11 @@ function _deleteProjectTodo(projectName, text) {
     throw new Error(`"${clean}" projesine yazma izni bulunmuyor.`);
   }
 
-  if (!canAiDelete(clean)) {
-    throw new Error(`AI Yetkilendirmesi: Bu projedeki görevleri silme yetkiniz yok. (Yalnızca AI tarafından oluşturulan projelerdeki görevler silinebilir)`);
+  // Delete permission: "none" blocks everything, "all" allows everything, and "only_ai" (default)
+  // allows AI projects plus tasks the AI added itself (they carry the <!--ai--> marker).
+  const mode = effectiveMode(clean, "allowAiDelete");
+  if (mode === "none") {
+    throw new Error("AI Yetkilendirmesi: Bu projede silme yetkisi kapalı.");
   }
 
   const root = getProjectsRoot();
@@ -998,23 +1001,35 @@ function _deleteProjectTodo(projectName, text) {
   let content = fs.readFileSync(todoFile, "utf-8");
   const lines = content.split("\n");
   const target = String(text).trim().toLowerCase();
-  let deleted = false;
 
-  const newLines = lines.filter((line) => {
+  const items = [];
+  lines.forEach((line, idx) => {
     const trimmed = line.trim();
     if (trimmed.startsWith("- [ ] ") || trimmed.startsWith("- [x] ") || trimmed.startsWith("- [X] ")) {
-      const itemText = trimmed.substring(6).trim();
-      if (itemText.toLowerCase() === target || itemText.toLowerCase().includes(target)) {
-        deleted = true;
-        return false;
-      }
+      const itemText = trimmed.substring(6).replace(/\s*<!--ai-->\s*$/, "").trim();
+      items.push({ idx, text: itemText, ai: trimmed.includes("<!--ai-->") });
     }
-    return true;
   });
 
-  if (!deleted) {
+  // Exact text wins; otherwise a substring must identify exactly one task (a task is never
+  // deleted just because the search text happens to appear in several).
+  const exact = items.filter((i) => i.text.toLowerCase() === target);
+  const pool = exact.length ? exact : items.filter((i) => i.text.toLowerCase().includes(target));
+  if (pool.length === 0) {
     throw new Error(`"${text}" görev listesinde bulunamadı.`);
   }
+  if (pool.length > 1 && !pool.every((i) => i.text === pool[0].text)) {
+    const shown = pool.slice(0, 5).map((i) => `"${i.text}"`).join(", ");
+    throw new Error(`"${text}" birden fazla göreve uyuyor (${pool.length}): ${shown}${pool.length > 5 ? ", ..." : ""}. Görevin tam metnini kullan.`);
+  }
+  const hit = pool[0];
+
+  if (mode !== "all" && !isAiProject(clean) && !hit.ai) {
+    throw new Error(`AI Yetkilendirmesi: "${hit.text}" görevini yapay zekâ eklemediği için silemezsiniz. Yalnızca AI'ın kendi eklediği görevler silinebilir (ayar: Silme yetkisi).`);
+  }
+
+  const newLines = lines.filter((_, idx) => idx !== hit.idx);
+  text = hit.text;
 
   atomicWriteFileSync(todoFile, newLines.join("\n"));
   return { success: true, project: clean, text };
@@ -1243,7 +1258,7 @@ const TOOLS = [
   },
   {
     name: "notes_delete_todo",
-    description: "Belirtilen projedeki bir görevi siler. İzin politikasına tabidir.",
+    description: "Belirtilen projedeki bir görevi siler (tam metin ya da tek göreve uyan parça; birden fazla uyarsa hata verir). Varsayılan izin: yalnızca AI'ın kendi eklediği görevler ve AI projeleri; kullanıcının görevleri silinemez. Ayar MindPipe'ta Silme yetkisi (genel veya proje bazlı).",
     inputSchema: {
       type: "object",
       properties: {
