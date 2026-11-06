@@ -601,7 +601,9 @@ function _setNotePinned(projectName, noteName, pinned) {
   return { success: true, file, project: clean, pinned: want };
 }
 
-function getProjectContext(projectName, tagFilter) {
+const CONTEXT_DEFAULT_MAX_CHARS = 30000;
+
+function getProjectContext(projectName, tagFilter, maxChars) {
   const clean = sanitizeName(projectName);
   if (!isProjectAllowed(clean)) {
     throw new Error(`"${clean}" projesine erişim izni bulunmuyor (İzole proje politikası).`);
@@ -691,11 +693,37 @@ function getProjectContext(projectName, tagFilter) {
     output += `---\n\n`;
   }
 
-  const regularNotes = topNotes.filter((n) => !n.isPinned);
+  let regularNotes = topNotes.filter((n) => !n.isPinned);
+  const budget = maxChars === undefined || maxChars === null ? CONTEXT_DEFAULT_MAX_CHARS : Number(maxChars);
+  let omitted = [];
+  if (budget > 0) {
+    // Pinned notes and the to-do list always come through in full; regular notes are added newest
+    // first while they fit, and the rest are listed by title so the agent can read them on demand.
+    const blocks = new Map(regularNotes.map((n) => [n, renderNote(n)]));
+    let used = output.length;
+    const keep = new Set();
+    for (const n of [...regularNotes].sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0))) {
+      const len = blocks.get(n).length;
+      if (used + len <= budget) {
+        keep.add(n);
+        used += len;
+      }
+    }
+    omitted = regularNotes.filter((n) => !keep.has(n));
+    regularNotes = regularNotes.filter((n) => keep.has(n));
+  }
   if (regularNotes.length > 0) {
     output += `## 📝 Notlar ve Kayıtlar\n\n`;
     regularNotes.forEach((n) => {
       output += renderNote(n);
+    });
+  }
+  if (omitted.length > 0) {
+    const titleOf = (n) => (n.content.split("\n").find((l) => l.trim()) || "").replace(/^#+\s*/, "").trim().slice(0, 80);
+    output += `\n## ✂️ Boyut sınırı nedeniyle eklenmeyen ${omitted.length} not (${budget} karakter sınırı)\n`;
+    output += `Gerekenleri notes_read_note ile oku, ya da max_chars değerini artır (0 = sınırsız).\n`;
+    omitted.forEach((n) => {
+      output += `- ${n.file}${tagSuffix(n.tags)} — ${titleOf(n)}\n`;
     });
   }
 
@@ -728,7 +756,10 @@ function getImage(projectName, imageName) {
   };
 }
 
-function searchNotes(query, projectName, tagFilter) {
+const SEARCH_DEFAULT_LIMIT = 20;
+const SEARCH_MAX_LIMIT = 100;
+
+function searchNotes(query, projectName, tagFilter, limit, offset) {
   const q = (query || "").toLowerCase();
   const wantedTag = tagFilter ? String(tagFilter).trim().toLowerCase() : "";
   const root = getProjectsRoot();
@@ -748,16 +779,29 @@ function searchNotes(query, projectName, tagFilter) {
       const fullPath = path.join(dir, f);
       const content = fs.readFileSync(fullPath, "utf-8");
       if (!q || content.toLowerCase().includes(q) || f.toLowerCase().includes(q)) {
+        let mtime = 0;
+        try {
+          mtime = fs.statSync(fullPath).mtimeMs;
+        } catch {}
         results.push({
           project: proj,
           file: f,
           tags,
           snippet: content.substring(0, 200),
+          mtime,
         });
       }
     }
   }
-  return results;
+
+  // Newest first, then a page: an empty query or tag-only search must not dump every note.
+  results.sort((a, b) => b.mtime - a.mtime);
+  const max = Math.min(Math.max(Math.floor(Number(limit)) || SEARCH_DEFAULT_LIMIT, 1), SEARCH_MAX_LIMIT);
+  const start = Math.max(Math.floor(Number(offset)) || 0, 0);
+  const page = results.slice(start, start + max).map(({ mtime, ...rest }) => rest);
+  const out = { total: results.length, returned: page.length, offset: start, results: page };
+  if (start + page.length < results.length) out.next_offset = start + page.length;
+  return out;
 }
 
 function createProject(projectName) {
@@ -955,27 +999,37 @@ function _toggleProjectTodo(projectName, textOrIndex, done) {
 
   let content = fs.readFileSync(todoFile, "utf-8");
   const lines = content.split("\n");
-  let updated = false;
-  const target = String(textOrIndex).trim().toLowerCase();
+  const hit = pickTodo(lines, textOrIndex);
 
-  const newLines = lines.map((line) => {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("- [ ] ") || trimmed.startsWith("- [x] ") || trimmed.startsWith("- [X] ")) {
-      const itemText = trimmed.substring(6).trim();
-      if (itemText.toLowerCase() === target || itemText.toLowerCase().includes(target)) {
-        updated = true;
-        return done ? `- [x] ${itemText}` : `- [ ] ${itemText}`;
-      }
-    }
-    return line;
-  });
-
-  if (!updated) {
-    throw new Error(`"${textOrIndex}" görev listesinde eşleşmedi.`);
-  }
+  const newLines = lines.slice();
+  newLines[hit.idx] = lines[hit.idx].replace(/- \[[ xX]\]/, done ? "- [x]" : "- [ ]");
 
   atomicWriteFileSync(todoFile, newLines.join("\n"));
   return { success: true, project: clean, done };
+}
+
+// Picks the one task a text refers to: exact text wins, otherwise a substring must match exactly
+// one task. A text that matches several is an error, so a change never lands on more than one.
+function pickTodo(lines, text) {
+  const target = String(text).trim().toLowerCase();
+  const items = [];
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("- [ ] ") || trimmed.startsWith("- [x] ") || trimmed.startsWith("- [X] ")) {
+      const itemText = trimmed.substring(6).replace(/\s*<!--ai-->\s*$/, "").trim();
+      items.push({ idx, text: itemText, ai: trimmed.includes("<!--ai-->") });
+    }
+  });
+  const exact = items.filter((i) => i.text.toLowerCase() === target);
+  const pool = exact.length ? exact : items.filter((i) => i.text.toLowerCase().includes(target));
+  if (pool.length === 0) {
+    throw new Error(`"${text}" görev listesinde bulunamadı.`);
+  }
+  if (pool.length > 1 && !pool.every((i) => i.text === pool[0].text)) {
+    const shown = pool.slice(0, 5).map((i) => `"${i.text}"`).join(", ");
+    throw new Error(`"${text}" birden fazla göreve uyuyor (${pool.length}): ${shown}${pool.length > 5 ? ", ..." : ""}. Görevin tam metnini kullan.`);
+  }
+  return pool[0];
 }
 
 function _deleteProjectTodo(projectName, text) {
@@ -1000,29 +1054,7 @@ function _deleteProjectTodo(projectName, text) {
 
   let content = fs.readFileSync(todoFile, "utf-8");
   const lines = content.split("\n");
-  const target = String(text).trim().toLowerCase();
-
-  const items = [];
-  lines.forEach((line, idx) => {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("- [ ] ") || trimmed.startsWith("- [x] ") || trimmed.startsWith("- [X] ")) {
-      const itemText = trimmed.substring(6).replace(/\s*<!--ai-->\s*$/, "").trim();
-      items.push({ idx, text: itemText, ai: trimmed.includes("<!--ai-->") });
-    }
-  });
-
-  // Exact text wins; otherwise a substring must identify exactly one task (a task is never
-  // deleted just because the search text happens to appear in several).
-  const exact = items.filter((i) => i.text.toLowerCase() === target);
-  const pool = exact.length ? exact : items.filter((i) => i.text.toLowerCase().includes(target));
-  if (pool.length === 0) {
-    throw new Error(`"${text}" görev listesinde bulunamadı.`);
-  }
-  if (pool.length > 1 && !pool.every((i) => i.text === pool[0].text)) {
-    const shown = pool.slice(0, 5).map((i) => `"${i.text}"`).join(", ");
-    throw new Error(`"${text}" birden fazla göreve uyuyor (${pool.length}): ${shown}${pool.length > 5 ? ", ..." : ""}. Görevin tam metnini kullan.`);
-  }
-  const hit = pool[0];
+  const hit = pickTodo(lines, text);
 
   if (mode !== "all" && !isAiProject(clean) && !hit.ai) {
     throw new Error(`AI Yetkilendirmesi: "${hit.text}" görevini yapay zekâ eklemediği için silemezsiniz. Yalnızca AI'ın kendi eklediği görevler silinebilir (ayar: Silme yetkisi).`);
@@ -1084,7 +1116,7 @@ const TOOLS = [
       properties: {
         project: { type: "string", description: "Proje adı (örneğin: 'ASCILINE', 'inbox')" },
         tag: { type: "string", description: "İsteğe bağlı: yalnızca bu etiketi taşıyan notları getir" },
-
+        max_chars: { type: "number", description: `İsteğe bağlı: çıktı karakter sınırı (varsayılan ${CONTEXT_DEFAULT_MAX_CHARS}, 0 = sınırsız). Sınır aşılırsa sabitli notlar ve en yeniler tam gelir, kalanlar yalnızca başlık olarak listelenir.` },
       },
       required: ["project"],
     },
@@ -1118,15 +1150,15 @@ const TOOLS = [
   },
   {
     name: "notes_pin_note",
-    description: "Bir notu sabitler veya sabitlemeyi kaldırır. 'pinned' verilmezse mevcut durumu tersine çevirir.",
+    description: "Bir notu sabitler (pinned: true) veya sabitlemeyi kaldırır (false). 'pinned' zorunludur; böylece tekrarlanan bir çağrı sabitlemeyi yanlışlıkla tersine çevirmez.",
     inputSchema: {
       type: "object",
       properties: {
         project: { type: "string", description: "Proje adı" },
         noteName: { type: "string", description: "Notun dosya adı veya başlangıcı" },
-        pinned: { type: "boolean", description: "true = sabitle, false = kaldır (opsiyonel)" },
+        pinned: { type: "boolean", description: "true = sabitle, false = kaldır" },
       },
-      required: ["project", "noteName"],
+      required: ["project", "noteName", "pinned"],
     },
   },
   {
@@ -1150,6 +1182,8 @@ const TOOLS = [
         query: { type: "string", description: "Aranacak kelime veya cümle (tag verildiyse boş olabilir)" },
         project: { type: "string", description: "İsteğe bağlı belirli bir proje adı" },
         tag: { type: "string", description: "İsteğe bağlı: yalnızca bu etiketi taşıyan notlarda ara" },
+        limit: { type: "number", description: `İsteğe bağlı: en fazla kaç sonuç dönsün (varsayılan ${SEARCH_DEFAULT_LIMIT}, en çok ${SEARCH_MAX_LIMIT}). Sonuçlar en yeni önce gelir.` },
+        offset: { type: "number", description: "İsteğe bağlı: önceki cevaptaki 'next_offset' değeri (sonraki sayfa için)." },
       },
       required: ["query"],
     },
@@ -1342,7 +1376,7 @@ function logMcpActivity(toolName, project, details) {
         logMcpActivity("notes_list_projects", "Tüm Projeler", { tr: "Projeleri listeledi", en: "Listed projects" });
         respond({ content: [{ type: "text", text: JSON.stringify(list, null, 2) }] });
       } else if (name === "notes_get_project_context") {
-        const context = getProjectContext(args.project, args.tag);
+        const context = getProjectContext(args.project, args.tag, args.max_chars);
         logMcpActivity("notes_get_project_context", args.project, args.tag ? { tr: `Notları okudu (etiket: ${args.tag})`, en: `Read notes (tag: ${args.tag})` } : { tr: "Notları ve görevleri okudu", en: "Read notes and tasks" });
         respond({ content: [{ type: "text", text: context }] });
       } else if (name === "notes_list_notes") {
@@ -1354,6 +1388,7 @@ function logMcpActivity(toolName, project, details) {
         logMcpActivity("notes_read_note", args.project, { tr: `Not okudu: ${args.noteName}`, en: `Read note: ${args.noteName}` });
         respond({ content: [{ type: "text", text }] });
       } else if (name === "notes_pin_note") {
+        if (typeof args.pinned !== "boolean") throw new Error("'pinned' zorunludur: true (sabitle) veya false (sabitlemeyi kaldır).");
         const res = setNotePinned(args.project, args.noteName, args.pinned);
         logMcpActivity("notes_pin_note", args.project, { tr: `${res.pinned ? "Sabitlendi" : "Sabitleme kaldırıldı"}: ${res.file}`, en: `${res.pinned ? "Pinned" : "Unpinned"}: ${res.file}` });
         respond({ content: [{ type: "text", text: `${res.pinned ? "Sabitlendi" : "Sabitleme kaldırıldı"}: ${res.file}` }] });
@@ -1367,9 +1402,9 @@ function logMcpActivity(toolName, project, details) {
           ],
         });
       } else if (name === "notes_search") {
-        const results = searchNotes(args.query, args.project, args.tag);
+        const results = searchNotes(args.query, args.project, args.tag, args.limit, args.offset);
         logMcpActivity("notes_search", args.project || "Tüm Projeler", { tr: `Arama yapıldı: "${args.query || ""}"${args.tag ? ` (etiket: ${args.tag})` : ""}`, en: `Searched: "${args.query || ""}"${args.tag ? ` (tag: ${args.tag})` : ""}` });
-        respond({ content: [{ type: "text", text: JSON.stringify(results, null, 2) }] });
+        respond({ content: [{ type: "text", text: JSON.stringify(results) }] });
       } else if (name === "notes_create_project") {
         const res = createProject(args.project);
         logMcpActivity("notes_create_project", args.project, { tr: `Yeni proje açtı: "${res.project}"`, en: `Created project: "${res.project}"` });
