@@ -1,2 +1,2 @@
-- The update notice now lists what changed in the new version before you download it.
-- Update checks also run while the app stays open (GitHub is contacted at most every 12 hours), so a long-running app still notices new releases.
+- Fixed: notes created by AI agents (MCP) within the same second no longer overwrite each other.
+- AI agents now keep tags tidy: at most 3 tags per note, tags that differ only by case or spacing reuse the existing one, and agents see the project's existing tags before adding new ones.
