@@ -510,7 +510,7 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
         const res = await fetch(pdfUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = new Uint8Array(await res.arrayBuffer());
-        loaded = await pdfjs.getDocument({ data }).promise;
+        loaded = await pdfjs.getDocument({ data, isEvalSupported: false }).promise;
         if (cancelled) {
           void loaded.destroy();
           return;
