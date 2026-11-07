@@ -1,2 +1,4 @@
-- Fixed: notes created by AI agents (MCP) within the same second no longer overwrite each other.
-- AI agents now keep tags tidy: at most 3 tags per note, tags that differ only by case or spacing reuse the existing one, and agents see the project's existing tags before adding new ones.
+- AI agents can no longer act on the wrong note: a note name that matches several notes is now an error that lists the candidates.
+- AI agents can delete the tasks they added themselves; your own tasks stay protected (switch it off under Delete permission in the MCP panel). Deleting or checking off a task by a text that matches several tasks no longer changes all of them.
+- Large MCP outputs are capped to save tokens: search returns 20 results per page, and project context is limited to 30,000 characters (pinned notes and tasks always come in full; omitted notes are listed by title).
+- `pin_note` now requires an explicit pinned value.
