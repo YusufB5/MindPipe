@@ -13,6 +13,7 @@ use tauri_plugin_opener::OpenerExt;
 
 mod bundle;
 mod dropfile;
+mod pdf;
 
 const CAPTURE_SHORTCUT: &str = "Ctrl+Shift+N";
 const EMBEDDED_MCP_SERVER: &str = include_str!("../../mcp-server.cjs");
@@ -1122,7 +1123,7 @@ fn export_ai_context(app: AppHandle, project: String) -> Result<String, String> 
     }
 
     // 2. Pinned Notes
-    let pinned: Vec<_> = entries.iter().filter(|e| e.pinned).collect();
+    let pinned: Vec<_> = entries.iter().filter(|e| e.pinned && e.kind != "pdf").collect();
     if !pinned.is_empty() {
         output.push_str("## 📌 Sabitlenmiş Önemli Notlar & Kurallar\n\n");
         for e in pinned {
@@ -1140,7 +1141,7 @@ fn export_ai_context(app: AppHandle, project: String) -> Result<String, String> 
     }
 
     // 3. Chronological / Ordered Notes
-    let regular: Vec<_> = entries.iter().filter(|e| !e.pinned).collect();
+    let regular: Vec<_> = entries.iter().filter(|e| !e.pinned && e.kind != "pdf").collect();
     if !regular.is_empty() {
         output.push_str("## 📝 Notlar ve Kayıtlar\n\n");
         for e in regular {
@@ -1175,6 +1176,7 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
     struct GroupItem {
         md_path: Option<PathBuf>,
         png_paths: Vec<PathBuf>,
+        pdf_path: Option<PathBuf>,
         modified: u128,
     }
 
@@ -1200,7 +1202,7 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_lowercase();
-            if ext != "md" && ext != "png" {
+            if ext != "md" && ext != "png" && ext != "pdf" {
                 continue;
             }
 
@@ -1223,6 +1225,7 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
             let item = map.entry(base_key).or_insert(GroupItem {
                 md_path: None,
                 png_paths: Vec::new(),
+                pdf_path: None,
                 modified: 0,
             });
 
@@ -1234,6 +1237,8 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
                 item.md_path = Some(path);
             } else if ext == "png" {
                 item.png_paths.push(path);
+            } else if ext == "pdf" {
+                item.pdf_path = Some(path);
             }
         }
     }
@@ -1251,7 +1256,13 @@ fn list_entries(app: AppHandle, project: String) -> Result<Vec<EntryMeta>, Strin
             let has_md = item.md_path.is_some();
             let has_png = !image_paths.is_empty();
 
-            let (kind, primary_path, preview) = if has_md && has_png {
+            let (kind, primary_path, preview) = if let Some(pdf) = item.pdf_path.as_ref() {
+                (
+                    "pdf".to_string(),
+                    pdf.to_string_lossy().to_string(),
+                    Some(pdf::display_name(pdf)),
+                )
+            } else if has_md && has_png {
                 let md = item.md_path.as_ref().unwrap();
                 let text = fs::read_to_string(md)
                     .ok()
@@ -1508,6 +1519,9 @@ fn delete_entry(app: AppHandle, path: String, image_paths: Option<Vec<String>>) 
                 let _ = fs::remove_file(ip);
             }
         }
+    }
+    if p.extension().and_then(|e| e.to_str()).map_or(false, |e| e.eq_ignore_ascii_case("pdf")) {
+        let _ = fs::remove_file(pdf::ink_path(p));
     }
     if let Some(parent) = p.parent() {
         let parent_buf = parent.to_path_buf();
@@ -2248,6 +2262,11 @@ pub fn run() {
             get_startup_settings,
             set_startup_settings,
             dropfile::read_dropped_file,
+            pdf::import_pdf_from_path,
+            pdf::import_pdf_bytes,
+            pdf::read_pdf_ink,
+            pdf::save_pdf_ink,
+            pdf::export_annotated_pdf,
             bundle::export_project,
             bundle::inspect_bundle,
             bundle::import_bundle,

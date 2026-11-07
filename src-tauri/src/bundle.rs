@@ -92,7 +92,7 @@ fn is_syncable_name(name: &str) -> bool {
         return false;
     }
     let lower = name.to_lowercase();
-    lower.ends_with(".md") || lower.ends_with(".png")
+    lower.ends_with(".md") || lower.ends_with(".png") || lower.ends_with(".pdf") || lower.ends_with(".ink.json")
 }
 
 fn read_json_file<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
@@ -405,6 +405,14 @@ pub fn merge_bundle_into(dir: &Path, bundle: &Bundle) -> Result<MergeSummary, St
 
         let local_hash = fnv_hex(&local);
         let base_hash = state.base.get(name).cloned();
+        // Pen strokes cannot be merged and a stray copy would have no PDF next to it: keep ours.
+        if name.to_lowercase().ends_with(".ink.json")
+            && Some(&local_hash) != base_hash.as_ref()
+            && Some(&incoming_hash) != base_hash.as_ref()
+        {
+            summary.skipped += 1;
+            continue;
+        }
         if Some(&local_hash) == base_hash.as_ref() {
             // Nothing changed here since the last exchange: simply take the newer version.
             atomic_write(&path, data)?;
@@ -671,6 +679,30 @@ mod tests {
         assert_eq!(read_project_id(&b.project("P")), read_project_id(&a.project("P")));
         let tags = get_tag_store(&b.project("P"));
         assert_eq!(tags.entries["2026-10-01_100000"], vec!["bug".to_string()]);
+    }
+
+    #[test]
+    fn pdfs_and_their_pen_strokes_travel_and_strokes_never_fork() {
+        let a = Device::new("a_pdf");
+        let b = Device::new("b_pdf");
+        a.write("P", "2026-10-01_100000.pdf", "%PDF-1.4 fake");
+        a.write("P", "2026-10-01_100000.ink.json", r#"{"version":1,"name":"Ders","pages":{}}"#);
+        let (_, summary) = import_new(&b, &a.export("P"));
+        assert_eq!(summary.added, 2);
+        assert_eq!(b.read("P", "2026-10-01_100000.pdf"), "%PDF-1.4 fake");
+
+        // Both devices draw on the same PDF: the local strokes stay, and no stray copy appears.
+        a.write("P", "2026-10-01_100000.ink.json", r#"{"version":1,"name":"Ders","pages":{"0":[1]}}"#);
+        b.write("P", "2026-10-01_100000.ink.json", r#"{"version":1,"name":"Ders","pages":{"0":[2]}}"#);
+        let s = import_into(&b, "P", &a.export("P"));
+        assert_eq!(s.conflicts, 0);
+        assert!(b.read("P", "2026-10-01_100000.ink.json").contains("[2]"));
+        let stray = fs::read_dir(b.project("P"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".json") && !e.file_name().to_string_lossy().starts_with('.'))
+            .count();
+        assert_eq!(stray, 1);
     }
 
     #[test]

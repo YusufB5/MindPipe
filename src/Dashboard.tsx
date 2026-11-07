@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -62,6 +62,10 @@ import {
   type McpStatus,
 } from "./lib/api";
 import { imageToPngDataUrl, listenForFileDrops, readDroppedFiles } from "./lib/dropFiles";
+import { bytesToBase64, importPdfBytes, importPdfFromPath } from "./lib/pdfInk";
+
+// pdf.js and pdf-lib are only downloaded when a PDF is opened.
+const PdfAnnotator = lazy(() => import("./PdfAnnotator"));
 import { extractImageFromPasteEvent, stripDataUrlPrefix } from "./lib/clipboardImage";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
@@ -285,6 +289,8 @@ export default function Dashboard() {
 
   // Lightbox state for full-size image viewing
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [pdfEntry, setPdfEntry] = useState<EntryMeta | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   // DevLog Stream states
   const [noteContents, setNoteContents] = useState<Record<string, string>>({});
@@ -500,7 +506,7 @@ export default function Dashboard() {
   const dropHandlerRef = useRef<(paths: string[]) => void>(() => {});
   const modalOpenRef = useRef(false);
   modalOpenRef.current = Boolean(
-    editingEntry || isSettingsOpen || isMcpModalOpen || trashOpen || shareOpen || tagModalEntry || lightboxImage
+    editingEntry || isSettingsOpen || isMcpModalOpen || trashOpen || shareOpen || tagModalEntry || lightboxImage || pdfEntry
   );
 
   function showDropToast(message: string) {
@@ -511,11 +517,28 @@ export default function Dashboard() {
 
   async function handleFilesDropped(paths: string[]) {
     if (modalOpenRef.current || paths.length === 0) return;
-    const { files, skipped } = await readDroppedFiles(paths);
+    const isPdfPath = (p: string) => p.toLowerCase().endsWith(".pdf");
+    let pdfAdded = 0;
+    let pdfFailed = 0;
+    for (const p of paths.filter(isPdfPath)) {
+      try {
+        await importPdfFromPath(active, p);
+        pdfAdded += 1;
+      } catch {
+        pdfFailed += 1;
+      }
+    }
+    const { files, skipped } = await readDroppedFiles(paths.filter((p) => !isPdfPath(p)));
     const images = files.filter((f) => f.kind === "image");
     const texts = files.filter((f) => f.kind === "text");
     if (images.length === 0 && texts.length === 0) {
-      showDropToast(t("dropNothing"));
+      if (pdfAdded > 0) {
+        setActiveTab("notes");
+        await refreshEntries(active, true);
+        showDropToast([t("pdfImported")(pdfAdded), pdfFailed > 0 ? t("pdfImportFailed") : ""].filter(Boolean).join(", "));
+      } else {
+        showDropToast(pdfFailed > 0 ? t("pdfImportFailed") : t("dropNothing"));
+      }
       return;
     }
     setActiveTab("notes");
@@ -547,8 +570,31 @@ export default function Dashboard() {
         skippedTotal += 1;
       }
     }
-    if (notesAdded > 0) await refreshEntries(active, true);
-    showDropToast(t("dropSummary")(notesAdded, imagesAdded, skippedTotal));
+    if (notesAdded > 0 || pdfAdded > 0) await refreshEntries(active, true);
+    showDropToast(
+      [t("dropSummary")(notesAdded, imagesAdded, skippedTotal), pdfAdded > 0 ? t("pdfImported")(pdfAdded) : "", pdfFailed > 0 ? t("pdfImportFailed") : ""]
+        .filter(Boolean)
+        .join(", ")
+    );
+  }
+
+  async function handlePdfPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (picked.length === 0) return;
+    let added = 0;
+    let failed = 0;
+    for (const file of picked) {
+      try {
+        const data = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+        await importPdfBytes(active, file.name, data);
+        added += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    if (added > 0) await refreshEntries(active, true);
+    showDropToast([added > 0 ? t("pdfImported")(added) : "", failed > 0 ? t("pdfImportFailed") : ""].filter(Boolean).join(", "));
   }
   dropHandlerRef.current = handleFilesDropped;
 
@@ -1220,6 +1266,10 @@ export default function Dashboard() {
   }
 
   async function handleOpenEntryModal(entry: EntryMeta) {
+    if (entry.kind === "pdf") {
+      setPdfEntry(entry);
+      return;
+    }
     setEditingEntry(entry);
     setEditorStatus("");
     if (entry.kind === "note" || entry.kind === "mixed") {
@@ -1261,7 +1311,7 @@ export default function Dashboard() {
 
   async function handleDeleteEntry(entry: EntryMeta, e?: React.MouseEvent) {
     if (e) e.stopPropagation();
-    const confirmed = window.confirm(t("deleteEntryConfirm")(entry.name));
+    const confirmed = window.confirm(entry.kind === "pdf" ? t("pdfDeleteConfirm")(entry.preview || entry.name) : t("deleteEntryConfirm")(entry.name));
     if (!confirmed) return;
 
     try {
@@ -1699,6 +1749,26 @@ export default function Dashboard() {
             </div>
 
             <div className="dashboard__header-actions">
+              {activeTab === "notes" && (
+                <>
+                  <input
+                    ref={pdfInputRef}
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    multiple
+                    hidden
+                    onChange={handlePdfPicked}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn--secondary dashboard__add-btn"
+                    onClick={() => pdfInputRef.current?.click()}
+                    title={t("pdfAddTitle")}
+                  >
+                    {t("pdfAdd")}
+                  </button>
+                </>
+              )}
               {activeTab === "notes" && (
                 <button
                   type="button"
@@ -2169,7 +2239,7 @@ export default function Dashboard() {
                           <article
                             key={entry.id || entry.path}
                             data-index={isChild ? undefined : idx}
-                            className={`devlog-item ${isChild ? "devlog-item--child" : ""} ${isContext ? "devlog-item--context" : ""} ${isNestTarget ? "devlog-item--nest-target" : ""} ${entry.pinned ? "devlog-item--pinned" : ""} ${isDragging ? "devlog-item--dragging" : ""} ${dropDirection ? `devlog-item--drop-target-${dropDirection}` : ""}`}
+                            className={`devlog-item ${entry.kind === "pdf" ? "devlog-item--pdf" : ""} ${isChild ? "devlog-item--child" : ""} ${isContext ? "devlog-item--context" : ""} ${isNestTarget ? "devlog-item--nest-target" : ""} ${entry.pinned ? "devlog-item--pinned" : ""} ${isDragging ? "devlog-item--dragging" : ""} ${dropDirection ? `devlog-item--drop-target-${dropDirection}` : ""}`}
                             onPointerDown={isChild ? undefined : (e) => handleStartCardDrag(e, idx)}
                           >
                             {/* DevLog Item Header */}
@@ -2293,6 +2363,7 @@ export default function Dashboard() {
                               className="devlog-action-btn devlog-action-btn--icon"
                               title={copiedPath === entry.path ? t("copied") : (lang === "tr" ? "Metni Kopyala" : "Copy Text")}
                               aria-label={lang === "tr" ? "Metni Kopyala" : "Copy Text"}
+                              data-note-only="true"
                               onClick={(e) => handleCopyEntryText(entry, e)}
                             >
                               {copiedPath === entry.path ? (
@@ -2322,6 +2393,7 @@ export default function Dashboard() {
                             <button
                               type="button"
                               className="devlog-action-btn devlog-action-btn--icon"
+                              data-note-only="true"
                               title={isInlineEditing ? (lang === "tr" ? "Düzenlemeyi Kapat" : "Close Editor") : (lang === "tr" ? "Düzenle" : "Edit")}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -2443,8 +2515,23 @@ export default function Dashboard() {
                               onDoubleClick={() => startInlineEdit(entry)}
                               title={t("doubleClickToEdit")}
                             >
-                              {renderDevLogContent(fullContent)}
-                              {!fullContent.trim() && (!entry.imagePaths || entry.imagePaths.length === 0) && (
+                              {entry.kind === "pdf" ? (
+                                <button
+                                  type="button"
+                                  className="pdf-card"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPdfEntry(entry);
+                                  }}
+                                >
+                                  <span className="pdf-card__badge">{t("pdfBadge")}</span>
+                                  <span className="pdf-card__name">{entry.preview || entry.name}</span>
+                                  <span className="pdf-card__open">{t("pdfOpen")} →</span>
+                                </button>
+                              ) : (
+                                renderDevLogContent(fullContent)
+                              )}
+                              {entry.kind !== "pdf" && !fullContent.trim() && (!entry.imagePaths || entry.imagePaths.length === 0) && (
                                 <span className="devlog-empty">{t("emptyEntry")}</span>
                               )}
                             </div>
@@ -3476,6 +3563,19 @@ export default function Dashboard() {
         </div>
       )}
       {dropToast && <div className="drop-toast">{dropToast}</div>}
+
+      {pdfEntry && (
+        <Suspense fallback={<div className="pdf-viewer"><div className="pdf-viewer__empty">{t("pdfLoading")}</div></div>}>
+          <PdfAnnotator
+            entry={pdfEntry}
+            lang={lang}
+            onClose={() => {
+              setPdfEntry(null);
+              void refreshEntries(active, true);
+            }}
+          />
+        </Suspense>
+      )}
 
       {updateInfo && (
         <div className="update-notice" role="status">

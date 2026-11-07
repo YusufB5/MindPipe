@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type EntryKind = "note" | "image" | "mixed";
+export type EntryKind = "note" | "image" | "mixed" | "pdf";
 
 export interface EntryMeta {
   id: string;
