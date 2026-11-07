@@ -720,10 +720,14 @@ function getProjectContext(projectName, tagFilter, maxChars) {
   }
   if (omitted.length > 0) {
     const titleOf = (n) => (n.content.split("\n").find((l) => l.trim()) || "").replace(/^#+\s*/, "").trim().slice(0, 80);
-    output += `\n## ✂️ Boyut sınırı nedeniyle eklenmeyen ${omitted.length} not (${budget} karakter sınırı)\n`;
-    output += `Gerekenleri notes_read_note ile oku, ya da max_chars değerini artır (0 = sınırsız).\n`;
+    const omittedKids = omitted.reduce((s, n) => s + childrenOf(n).length, 0);
+    output += `\n## ✂️ Boyut sınırı nedeniyle eklenmeyen ${omitted.length + omittedKids} not (${budget} karakter sınırı)\n`;
+    output += `Gerekenleri notes_read_note ile oku, ya da max_chars değerini artır (0 = sınırsız). Alt notlar "↳" ile üst notunun altında listelenir.\n`;
     omitted.forEach((n) => {
       output += `- ${n.file}${tagSuffix(n.tags)} — ${titleOf(n)}\n`;
+      childrenOf(n).forEach((c) => {
+        output += `  ↳ ${c.file}${tagSuffix(c.tags)} — ${titleOf(c)}\n`;
+      });
     });
   }
 
@@ -1116,7 +1120,7 @@ const TOOLS = [
       properties: {
         project: { type: "string", description: "Proje adı (örneğin: 'ASCILINE', 'inbox')" },
         tag: { type: "string", description: "İsteğe bağlı: yalnızca bu etiketi taşıyan notları getir" },
-        max_chars: { type: "number", description: `İsteğe bağlı: çıktı karakter sınırı (varsayılan ${CONTEXT_DEFAULT_MAX_CHARS}, 0 = sınırsız). Sınır aşılırsa sabitli notlar ve en yeniler tam gelir, kalanlar yalnızca başlık olarak listelenir.` },
+        max_chars: { type: "number", description: `İsteğe bağlı: çıktı karakter sınırı (varsayılan ${CONTEXT_DEFAULT_MAX_CHARS}, 0 = sınırsız). Kesin bir üst sınır değildir: başlıklar, görevler ve sabitli notlar (alt notlarıyla) her zaman tam gelir ve sınırı aşabilir. Sığmayan diğer notlar (alt notlarıyla) yalnızca başlık olarak listelenir; en yeniler öncelikli.` },
       },
       required: ["project"],
     },
