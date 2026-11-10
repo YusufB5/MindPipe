@@ -4625,3 +4625,298 @@ body.is-reordering-cards * {
   mix-blend-mode: multiply;
   pointer-events: none;
 }
+
+/* ---- movable toolbar: docked to any edge or floating */
+.pdf-viewer[data-dock="top"],
+.pdf-viewer[data-dock="float"] {
+  flex-direction: column;
+}
+
+.pdf-viewer[data-dock="bottom"] {
+  flex-direction: column-reverse;
+}
+
+.pdf-viewer[data-dock="left"] {
+  flex-direction: row;
+}
+
+.pdf-viewer[data-dock="right"] {
+  flex-direction: row-reverse;
+}
+
+.pdf-viewer__scroll {
+  min-width: 0;
+  min-height: 0;
+}
+
+.pdf-viewer[data-dock="bottom"] .pdf-viewer__bar {
+  border-bottom: none;
+  border-top: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+}
+
+.pdf-viewer__bar--vertical {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: center;
+  width: 60px;
+  padding: 8px 6px;
+  gap: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-bottom: none;
+  border-right: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+}
+
+.pdf-viewer[data-dock="right"] .pdf-viewer__bar--vertical {
+  border-right: none;
+  border-left: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+}
+
+.pdf-viewer__bar--vertical .pdf-viewer__group {
+  flex-direction: column;
+}
+
+.pdf-viewer__bar--vertical .pdf-viewer__group--colors {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 48px;
+}
+
+.pdf-viewer__bar--vertical .pdf-viewer__title {
+  display: none;
+}
+
+.pdf-viewer__bar--float {
+  position: absolute;
+  z-index: 6;
+  max-height: calc(100% - 16px);
+  border: 1px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.pdf-viewer__grip {
+  cursor: grab;
+  touch-action: none;
+  color: var(--text-muted);
+}
+
+.pdf-viewer__grip:active {
+  cursor: grabbing;
+}
+
+.pdf-viewer__dockhint {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--spine) 28%, transparent);
+  border: 2px dashed var(--spine);
+}
+
+.pdf-viewer__dockhint--top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+}
+
+.pdf-viewer__dockhint--bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+}
+
+.pdf-viewer__dockhint--left {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 64px;
+}
+
+.pdf-viewer__dockhint--right {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 64px;
+}
+
+.pdf-viewer__message {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 7;
+  max-width: 80%;
+  transform: translateX(-50%);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.pdf-viewer__swatch--more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 60%, transparent);
+}
+
+.pdf-viewer__swatch--more:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.pdf-colormenu {
+  position: fixed;
+  z-index: 9999;
+  width: 204px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-radius: 12px;
+  background: var(--bg-subtle);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
+}
+
+.pdf-colormenu__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  justify-items: center;
+}
+
+.pdf-colormenu__swatch {
+  width: 30px;
+  height: 30px;
+}
+
+.pdf-colormenu__custom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pdf-colormenu__custom input[type="color"] {
+  width: 44px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+/* compact floating panel: the same controls, several per row, so it stays small */
+.pdf-viewer__bar--float {
+  width: 132px;
+  padding: 8px;
+  gap: 6px;
+}
+
+.pdf-viewer__bar--float .pdf-viewer__group,
+.pdf-viewer__bar--float .pdf-viewer__group--colors {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 116px;
+  gap: 4px;
+}
+
+.pdf-viewer__bar--float .pdf-viewer__spacer {
+  display: none;
+}
+
+.pdf-viewer__bar--float .pdf-viewer__group--tail {
+  padding-top: 2px;
+  border-top: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+}
+
+/* ---- "+ PDF" split button: one click adds a PDF, the arrow opens more choices */
+.split-btn {
+  position: relative;
+  display: inline-flex;
+}
+
+.split-btn__main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.split-btn__toggle {
+  margin-left: -1px;
+  padding-left: 7px;
+  padding-right: 7px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.split-btn__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 170px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.split-btn__item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.split-btn__item:hover {
+  background: color-mix(in srgb, var(--spine) 15%, transparent);
+}
+
+/* ---- a docked top/bottom bar has to fit small windows: tighter gaps, no title below 960px */
+.pdf-viewer__bar:not(.pdf-viewer__bar--vertical) {
+  gap: 4px 8px;
+}
+
+@media (max-width: 960px) {
+  .pdf-viewer__bar:not(.pdf-viewer__bar--vertical) .pdf-viewer__title {
+    display: none;
+  }
+}
+
+/* below 900px the docked bar wraps to a second row instead of hiding or cutting off controls */
+@media (max-width: 900px) {
+  .pdf-viewer__bar:not(.pdf-viewer__bar--vertical) {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+}
+
+/* The sidebar already highlights the open project, so the name in the header is dropped once the
+   space left for it is too small to show more than "i...". The count badge and tabs stay. */
+.dashboard__header-left {
+  container-type: inline-size;
+  container-name: headerleft;
+}
+
+@container headerleft (max-width: 340px) {
+  .dashboard__title-wrap h1 {
+    display: none;
+  }
+}

@@ -17,6 +17,8 @@ export interface InkDoc {
   version: number;
   name: string;
   pages: Record<string, Stroke[]>;
+  /** A page created from scratch (not an imported PDF) */
+  blank?: boolean;
 }
 
 export function emptyInk(name = ""): InkDoc {
@@ -36,7 +38,7 @@ export function parseInk(json: string): InkDoc {
         );
       }
     }
-    return { version: 1, name: typeof raw?.name === "string" ? raw.name : "", pages };
+    return { version: 1, name: typeof raw?.name === "string" ? raw.name : "", pages, blank: raw?.blank === true };
   } catch {
     return emptyInk();
   }
@@ -54,7 +56,7 @@ export function serializeInk(doc: InkDoc): string {
       }));
     }
   }
-  return JSON.stringify({ version: 1, name: doc.name, pages });
+  return JSON.stringify(doc.blank ? { version: 1, name: doc.name, pages, blank: true } : { version: 1, name: doc.name, pages });
 }
 
 function round(n: number, digits: number): number {
@@ -221,8 +223,17 @@ export function importPdfFromPath(project: string, path: string): Promise<string
   return invoke("import_pdf_from_path", { project, path });
 }
 
-export function importPdfBytes(project: string, name: string, dataB64: string): Promise<string> {
-  return invoke("import_pdf_bytes", { project, name, dataB64 });
+export function importPdfBytes(project: string, name: string, dataB64: string, blank?: boolean): Promise<string> {
+  return invoke("import_pdf_bytes", { project, name, dataB64, blank });
+}
+
+/** Creates an empty A4 page in the project (stored like a one-page PDF) and returns its path. */
+export async function importBlankPage(project: string, name: string): Promise<string> {
+  const { PDFDocument } = await import("pdf-lib");
+  const doc = await PDFDocument.create();
+  doc.addPage([595.28, 841.89]);
+  const bytes = await doc.save();
+  return importPdfBytes(project, name, bytesToBase64(bytes), true);
 }
 
 export function readPdfInk(pdfPath: string): Promise<string> {

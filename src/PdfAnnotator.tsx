@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { EntryMeta } from "./lib/api";
-import { revealInFolder } from "./lib/api";
+import { deleteEntry, revealInFolder } from "./lib/api";
 import { translations, type Language } from "./lib/i18n";
 import {
   bytesToBase64,
@@ -30,6 +30,88 @@ type Tool = "pen" | "highlighter" | "eraser" | "select" | "hand";
 
 const PEN_COLORS = ["#111111", "#dc2626", "#2563eb", "#16a34a"];
 const HIGHLIGHT_COLORS = ["#facc15", "#4ade80", "#f472b6", "#38bdf8"];
+
+const PEN_PRESETS = [
+  "#111111", "#4b5563", "#9ca3af", "#ffffff",
+  "#dc2626", "#ea580c", "#f59e0b", "#16a34a",
+  "#0d9488", "#2563eb", "#7c3aed", "#db2777",
+  "#92400e", "#0e7490", "#be123c", "#4d7c0f",
+];
+const HIGHLIGHT_PRESETS = [
+  "#facc15", "#fde047", "#a3e635", "#4ade80",
+  "#2dd4bf", "#38bdf8", "#818cf8", "#c084fc",
+  "#f472b6", "#fb7185", "#fb923c", "#e5e7eb",
+];
+/** Colours shown in the toolbar per tool; picking a new one from the menu replaces the oldest. */
+const MAX_QUICK = 4;
+const HEX = /^#[0-9a-f]{6}$/i;
+const COLORS_KEY = "mindpipe_pdf_colors";
+const BAR_KEY = "mindpipe_pdf_bar";
+const SNAP_DISTANCE = 72;
+
+type Dock = "top" | "bottom" | "left" | "right" | "float";
+interface BarLayout {
+  dock: Dock;
+  x: number;
+  y: number;
+}
+
+const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), Math.max(lo, hi));
+
+function loadBarLayout(): BarLayout {
+  try {
+    const raw = JSON.parse(localStorage.getItem(BAR_KEY) || "null");
+    if (raw && ["top", "bottom", "left", "right", "float"].includes(raw.dock) && Number.isFinite(raw.x) && Number.isFinite(raw.y)) {
+      return { dock: raw.dock, x: raw.x, y: raw.y };
+    }
+  } catch {
+    // storage unavailable or corrupt: fall back to the default
+  }
+  return { dock: "top", x: 24, y: 80 };
+}
+
+function saveBarLayout(layout: BarLayout) {
+  try {
+    localStorage.setItem(BAR_KEY, JSON.stringify(layout));
+  } catch {
+    // not persisted
+  }
+}
+
+function loadQuickColors(): { pen: string[]; hl: string[] } {
+  const fallback = { pen: [...PEN_COLORS], hl: [...HIGHLIGHT_COLORS] };
+  try {
+    const raw = JSON.parse(localStorage.getItem(COLORS_KEY) || "null");
+    if (!raw) return fallback;
+    const clean = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((c): c is string => typeof c === "string" && HEX.test(c)).slice(0, MAX_QUICK) : [];
+    const pen = clean(raw.pen);
+    const hl = clean(raw.hl);
+    return { pen: pen.length > 0 ? pen : fallback.pen, hl: hl.length > 0 ? hl : fallback.hl };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveQuickColors(q: { pen: string[]; hl: string[] }) {
+  try {
+    localStorage.setItem(COLORS_KEY, JSON.stringify(q));
+  } catch {
+    // not persisted
+  }
+}
+
+/** The window edge the pointer is close enough to for docking, if any. */
+function nearestEdge(px: number, py: number, width: number, height: number): Dock | null {
+  const candidates: [Dock, number][] = [
+    ["top", py],
+    ["bottom", height - py],
+    ["left", px],
+    ["right", width - px],
+  ];
+  candidates.sort((a, b) => a[1] - b[1]);
+  return candidates[0][1] < SNAP_DISTANCE ? candidates[0][0] : null;
+}
 /** Line widths as a fraction of the page width (an A4 page is ~595 pt wide). */
 const SIZES = [0.0012, 0.0025, 0.005];
 const HIGHLIGHT_FACTOR = 6;
@@ -384,7 +466,7 @@ interface HistoryItem {
   after: Stroke[];
 }
 
-type IconName = "pen" | "highlighter" | "eraser" | "select" | "hand" | "trash" | "undo" | "redo" | "download" | "close";
+type IconName = "pen" | "highlighter" | "eraser" | "select" | "hand" | "trash" | "undo" | "redo" | "download" | "close" | "grip";
 
 const ICON_PATHS: Record<IconName, React.ReactNode> = {
   pen: (
@@ -441,6 +523,16 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
       <path d="M12 15V3" />
     </>
   ),
+  grip: (
+    <>
+      <circle cx="9" cy="6" r="1" />
+      <circle cx="15" cy="6" r="1" />
+      <circle cx="9" cy="12" r="1" />
+      <circle cx="15" cy="12" r="1" />
+      <circle cx="9" cy="18" r="1" />
+      <circle cx="15" cy="18" r="1" />
+    </>
+  ),
   close: (
     <>
       <path d="M18 6 6 18" />
@@ -463,8 +555,18 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
   const [loadError, setLoadError] = useState("");
   const [aspects, setAspects] = useState<number[]>([]);
   const [tool, setTool] = useState<Tool>("pen");
-  const [penColor, setPenColor] = useState(PEN_COLORS[0]);
-  const [highlightColor, setHighlightColor] = useState(HIGHLIGHT_COLORS[0]);
+  const [quick, setQuick] = useState(loadQuickColors);
+  const [penColor, setPenColor] = useState(() => quick.pen[0]);
+  const [highlightColor, setHighlightColor] = useState(() => quick.hl[0]);
+  const [colorMenu, setColorMenu] = useState<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const customColorRef = useRef<HTMLInputElement>(null);
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const [bar, setBar] = useState<BarLayout>(loadBarLayout);
+  const [drag, setDrag] = useState<{ x: number; y: number; hint: Dock | null } | null>(null);
+  const dragRef = useRef<{ id: number; dx: number; dy: number } | null>(null);
+  const dragLatest = useRef<{ x: number; y: number; hint: Dock | null } | null>(null);
   const [sizeIndex, setSizeIndex] = useState(1);
   const [zoom, setZoom] = useState(1);
   const [rev, setRev] = useState(0);
@@ -666,8 +768,57 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
 
   async function handleClose() {
     if (dirty.current) await doSave();
+    // A blank page nobody drew on is not worth keeping in the project.
+    const ink = inkRef.current;
+    if (inkLoaded.current && ink.blank && Object.values(ink.pages).every((s) => s.length === 0)) {
+      try {
+        await deleteEntry(entry.path, []);
+      } catch {
+        // keep it if it cannot be removed
+      }
+    }
     onClose();
   }
+
+  useEffect(() => {
+    saveBarLayout(bar);
+  }, [bar]);
+
+  // A floating toolbar stays reachable when the window shrinks.
+  useEffect(() => {
+    if (bar.dock !== "float") return;
+    const keepInside = () => {
+      const v = viewerRef.current;
+      const b = barRef.current;
+      if (!v || !b) return;
+      const x = clamp(bar.x, 0, v.clientWidth - b.offsetWidth);
+      const y = clamp(bar.y, 0, v.clientHeight - b.offsetHeight);
+      if (x !== bar.x || y !== bar.y) setBar({ dock: "float", x, y });
+    };
+    keepInside();
+    window.addEventListener("resize", keepInside);
+    return () => window.removeEventListener("resize", keepInside);
+  }, [bar]);
+
+  useEffect(() => {
+    if (!colorMenu) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (menuRef.current?.contains(target as Node) || target?.closest?.(".pdf-viewer__swatch--more")) return;
+      setColorMenu(null);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    const input = customColorRef.current;
+    // "change" fires once the picker is dismissed, so one custom colour is one undo step.
+    const onCommit = () => {
+      if (input) chooseColorRef.current(input.value);
+    };
+    input?.addEventListener("change", onCommit);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      input?.removeEventListener("change", onCommit);
+    };
+  }, [colorMenu]);
 
   const closeRef = useRef(handleClose);
   closeRef.current = handleClose;
@@ -676,7 +827,7 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
   const redoRef = useRef(redo);
   redoRef.current = redo;
   const escapeRef = useRef<() => void>(() => {});
-  escapeRef.current = () => (selection ? setSelection(null) : void handleClose());
+  escapeRef.current = () => (colorMenu ? setColorMenu(null) : selection ? setSelection(null) : void handleClose());
   const deleteRef = useRef(deleteSelected);
   deleteRef.current = deleteSelected;
 
@@ -836,7 +987,7 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
   const editingSelection = tool === "select" && selectedStroke !== undefined;
   const isHighlighterStroke = editingSelection ? Boolean(selectedStroke?.h) : tool === "highlighter";
   const activeColor = editingSelection && selectedStroke ? selectedStroke.c : isHighlighterStroke ? highlightColor : penColor;
-  const palette = isHighlighterStroke ? HIGHLIGHT_COLORS : PEN_COLORS;
+  const palette = isHighlighterStroke ? quick.hl : quick.pen;
   const colorsEnabled = tool === "pen" || tool === "highlighter" || editingSelection;
   const activeSizeIndex =
     editingSelection && selectedStroke
@@ -855,12 +1006,122 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
     pushHistory({ page: selection.page, before, after });
   }
 
+  /** Pick a colour for the pen, the highlighter or the selected stroke, and remember it in the toolbar. */
+  function chooseColor(c: string) {
+    if (!HEX.test(c)) return;
+    if (editingSelection) changeSelected({ c });
+    else if (tool === "highlighter") setHighlightColor(c);
+    else setPenColor(c);
+    const type = isHighlighterStroke ? "hl" : "pen";
+    setQuick((q) => {
+      if (q[type].includes(c)) return q;
+      const next = { ...q, [type]: [c, ...q[type]].slice(0, MAX_QUICK) };
+      saveQuickColors(next);
+      return next;
+    });
+  }
+  const chooseColorRef = useRef(chooseColor);
+  chooseColorRef.current = chooseColor;
+
+  const floating = drag !== null || bar.dock === "float";
+  const vertical = floating || bar.dock === "left" || bar.dock === "right";
+  const dockNow: Dock = drag ? "float" : bar.dock;
+
+  function openColorMenu(e: React.MouseEvent<HTMLButtonElement>) {
+    if (colorMenu) {
+      setColorMenu(null);
+      return;
+    }
+    const r = e.currentTarget.getBoundingClientRect();
+    const W = 204;
+    const H = 240;
+    let x: number;
+    let y: number;
+    if (vertical) {
+      x = bar.dock === "right" ? r.left - W - 8 : r.right + 8 + W <= window.innerWidth ? r.right + 8 : r.left - W - 8;
+      y = r.top;
+    } else {
+      x = r.left;
+      y = bar.dock === "bottom" ? r.top - H - 8 : r.bottom + 8;
+    }
+    setColorMenu({ x: clamp(x, 8, window.innerWidth - W - 8), y: clamp(y, 8, window.innerHeight - H - 8) });
+  }
+
+  // ----- toolbar: drag it anywhere; dropping it near an edge docks it there
+  function onGripDown(e: React.PointerEvent<HTMLButtonElement>) {
+    if (e.button !== 0) return;
+    const viewer = viewerRef.current;
+    const el = barRef.current;
+    if (!viewer || !el) return;
+    const vr = viewer.getBoundingClientRect();
+    const br = el.getBoundingClientRect();
+    // The bar changes shape while it is carried, so keep the grip (its top-left corner) under the pointer.
+    dragRef.current = { id: e.pointerId, dx: Math.min(e.clientX - br.left, 24), dy: Math.min(e.clientY - br.top, 24) };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // the pointer is already gone
+    }
+    const start = { x: br.left - vr.left, y: br.top - vr.top, hint: null as Dock | null };
+    dragLatest.current = start;
+    setDrag(start);
+    e.preventDefault();
+  }
+
+  function onGripMove(e: React.PointerEvent<HTMLButtonElement>) {
+    const d = dragRef.current;
+    const viewer = viewerRef.current;
+    const el = barRef.current;
+    if (!d || d.id !== e.pointerId || !viewer || !el) return;
+    const vr = viewer.getBoundingClientRect();
+    const px = e.clientX - vr.left;
+    const py = e.clientY - vr.top;
+    const next = {
+      x: clamp(px - d.dx, 0, vr.width - el.offsetWidth),
+      y: clamp(py - d.dy, 0, vr.height - el.offsetHeight),
+      hint: nearestEdge(px, py, vr.width, vr.height),
+    };
+    dragLatest.current = next;
+    setDrag(next);
+  }
+
+  function onGripUp(e: React.PointerEvent<HTMLButtonElement>) {
+    const d = dragRef.current;
+    if (!d || d.id !== e.pointerId) return;
+    dragRef.current = null;
+    const last = dragLatest.current;
+    dragLatest.current = null;
+    setDrag(null);
+    if (!last) return;
+    setBar({ dock: last.hint ?? "float", x: last.x, y: last.y });
+  }
+
   return (
-    <div className="pdf-viewer" role="dialog" aria-label={title}>
-      <div className="pdf-viewer__bar">
+    <div className="pdf-viewer" role="dialog" aria-label={title} data-dock={dockNow} ref={viewerRef}>
+      {drag?.hint && <div className={`pdf-viewer__dockhint pdf-viewer__dockhint--${drag.hint}`} />}
+      <div
+        ref={barRef}
+        className={`pdf-viewer__bar ${vertical ? "pdf-viewer__bar--vertical" : ""} ${floating ? "pdf-viewer__bar--float" : ""}`}
+        style={floating ? { left: drag ? drag.x : bar.x, top: drag ? drag.y : bar.y } : undefined}
+      >
+        <div className="pdf-viewer__group pdf-viewer__group--head">
+        <button
+          type="button"
+          className="pdf-viewer__btn pdf-viewer__grip"
+          title={tr.pdfDragToolbar}
+          aria-label={tr.pdfDragToolbar}
+          onPointerDown={onGripDown}
+          onPointerMove={onGripMove}
+          onPointerUp={onGripUp}
+          onPointerCancel={onGripUp}
+          onDoubleClick={() => setBar((b) => ({ ...b, dock: "top" }))}
+        >
+          <Icon name="grip" />
+        </button>
         <button type="button" className="pdf-viewer__btn" onClick={() => void handleClose()} title={tr.pdfClose} aria-label={tr.pdfClose}>
           <Icon name="close" />
         </button>
+        </div>
         <span className="pdf-viewer__title" title={title}>
           {title}
         </span>
@@ -902,7 +1163,7 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
           </button>
         </div>
 
-        <div className="pdf-viewer__group" aria-hidden={!colorsEnabled} style={{ opacity: colorsEnabled ? 1 : 0.35 }}>
+        <div className="pdf-viewer__group pdf-viewer__group--colors" aria-hidden={!colorsEnabled} style={{ opacity: colorsEnabled ? 1 : 0.35 }}>
           {palette.map((c) => (
             <button
               key={c}
@@ -910,14 +1171,22 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
               className={`pdf-viewer__swatch ${activeColor === c ? "pdf-viewer__swatch--active" : ""}`}
               style={{ background: c }}
               disabled={!colorsEnabled}
-              onClick={() => {
-                if (editingSelection) changeSelected({ c });
-                else if (tool === "highlighter") setHighlightColor(c);
-                else setPenColor(c);
-              }}
+              onClick={() => chooseColor(c)}
               aria-label={c}
             />
           ))}
+          <button
+            type="button"
+            className="pdf-viewer__swatch pdf-viewer__swatch--more"
+            disabled={!colorsEnabled}
+            onClick={openColorMenu}
+            title={tr.pdfMoreColors}
+            aria-label={tr.pdfMoreColors}
+          >
+            +
+          </button>
+        </div>
+        <div className="pdf-viewer__group pdf-viewer__group--sizes" aria-hidden={!colorsEnabled} style={{ opacity: colorsEnabled ? 1 : 0.35 }}>
           {SIZES.map((_, i) => (
             <button
               key={i}
@@ -956,6 +1225,7 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
         </div>
 
         <span className="pdf-viewer__spacer" />
+        <div className="pdf-viewer__group pdf-viewer__group--tail">
         {numPages > 0 && (
           <span className="pdf-viewer__status" title={tr.pdfPageOf(currentPage, numPages)}>
             {currentPage} / {numPages}
@@ -977,6 +1247,7 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
         >
           <Icon name="download" />
         </button>
+        </div>
       </div>
 
       {message && <div className="pdf-viewer__message">{message}</div>}
@@ -1020,6 +1291,30 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
           </div>
         )}
       </div>
+
+      {colorMenu && (
+        <div className="pdf-colormenu" ref={menuRef} style={{ left: colorMenu.x, top: colorMenu.y }}>
+          <div className="pdf-colormenu__grid">
+            {(isHighlighterStroke ? HIGHLIGHT_PRESETS : PEN_PRESETS).map((c) => (
+              <button
+                key={c}
+                type="button"
+                className={`pdf-viewer__swatch pdf-colormenu__swatch ${activeColor.toLowerCase() === c ? "pdf-viewer__swatch--active" : ""}`}
+                style={{ background: c }}
+                onClick={() => {
+                  chooseColor(c);
+                  setColorMenu(null);
+                }}
+                aria-label={c}
+              />
+            ))}
+          </div>
+          <label className="pdf-colormenu__custom">
+            <input ref={customColorRef} type="color" defaultValue={HEX.test(activeColor) ? activeColor : "#111111"} />
+            <span>{tr.pdfCustomColor}</span>
+          </label>
+        </div>
+      )}
     </div>
   );
 }

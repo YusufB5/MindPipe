@@ -62,7 +62,7 @@ import {
   type McpStatus,
 } from "./lib/api";
 import { imageToPngDataUrl, listenForFileDrops, readDroppedFiles } from "./lib/dropFiles";
-import { bytesToBase64, importPdfBytes, importPdfFromPath } from "./lib/pdfInk";
+import { bytesToBase64, importBlankPage, importPdfBytes, importPdfFromPath } from "./lib/pdfInk";
 
 // pdf.js and pdf-lib are only downloaded when a PDF is opened.
 const PdfAnnotator = lazy(() => import("./PdfAnnotator"));
@@ -291,6 +291,24 @@ export default function Dashboard() {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [pdfEntry, setPdfEntry] = useState<EntryMeta | null>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!addMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!addMenuRef.current?.contains(e.target as Node)) setAddMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAddMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [addMenuOpen]);
 
   // DevLog Stream states
   const [noteContents, setNoteContents] = useState<Record<string, string>>({});
@@ -576,6 +594,22 @@ export default function Dashboard() {
         .filter(Boolean)
         .join(", ")
     );
+  }
+
+  /** Creates an empty page in the current project and opens it for drawing. */
+  async function handleNewBlankPage() {
+    try {
+      setActiveTab("notes");
+      const d = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const name = `${t("pdfBlankName")} ${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const path = await importBlankPage(active, name);
+      await refreshEntries(active, true);
+      const stem = path.split(/[\\/]/).pop()?.replace(/\.pdf$/i, "") ?? name;
+      setPdfEntry({ id: stem, name: stem, path, imagePaths: [], kind: "pdf", modified: Date.now(), preview: name, pinned: false });
+    } catch {
+      showDropToast(t("pdfImportFailed"));
+    }
   }
 
   async function handlePdfPicked(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1759,14 +1793,53 @@ export default function Dashboard() {
                     hidden
                     onChange={handlePdfPicked}
                   />
-                  <button
-                    type="button"
-                    className="btn btn--secondary dashboard__add-btn"
-                    onClick={() => pdfInputRef.current?.click()}
-                    title={t("pdfAddTitle")}
-                  >
-                    {t("pdfAdd")}
-                  </button>
+                  <div className="split-btn" ref={addMenuRef}>
+                    <button
+                      type="button"
+                      className="btn btn--secondary dashboard__add-btn split-btn__main"
+                      onClick={() => pdfInputRef.current?.click()}
+                      title={t("pdfAddTitle")}
+                    >
+                      {t("pdfAdd")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--secondary dashboard__add-btn split-btn__toggle"
+                      onClick={() => setAddMenuOpen((o) => !o)}
+                      aria-haspopup="menu"
+                      aria-expanded={addMenuOpen}
+                      title={t("pdfAddMenuTitle")}
+                      aria-label={t("pdfAddMenuTitle")}
+                    >
+                      ▾
+                    </button>
+                    {addMenuOpen && (
+                      <div className="split-btn__menu" role="menu">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="split-btn__item"
+                          onClick={() => {
+                            setAddMenuOpen(false);
+                            pdfInputRef.current?.click();
+                          }}
+                        >
+                          {t("pdfAddFile")}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="split-btn__item"
+                          onClick={() => {
+                            setAddMenuOpen(false);
+                            void handleNewBlankPage();
+                          }}
+                        >
+                          {t("pdfNewPage")}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
               {activeTab === "notes" && (

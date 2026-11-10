@@ -37,7 +37,7 @@ fn clean_display_name(raw: &str) -> String {
 }
 
 /// Stores a validated PDF in the project and returns its path.
-fn store_pdf(app: &AppHandle, project: &str, display: &str, bytes: &[u8]) -> Result<String, String> {
+fn store_pdf(app: &AppHandle, project: &str, display: &str, bytes: &[u8], blank: bool) -> Result<String, String> {
     if bytes.len() as u64 > MAX_PDF_BYTES {
         return Err("PDF çok büyük (en fazla 150 MB)".into());
     }
@@ -53,7 +53,8 @@ fn store_pdf(app: &AppHandle, project: &str, display: &str, bytes: &[u8]) -> Res
     let stem = unique_timestamp_stem(&dir);
     let pdf_path = dir.join(format!("{}.pdf", stem));
     atomic_write(&pdf_path, bytes)?;
-    let meta = serde_json::json!({ "version": 1, "name": clean_display_name(display), "pages": {} });
+    // `blank` marks a page created from scratch, so an untouched one can be dropped when it is closed.
+    let meta = serde_json::json!({ "version": 1, "name": clean_display_name(display), "pages": {}, "blank": blank });
     atomic_write(&ink_path(&pdf_path), meta.to_string().as_bytes())?;
     let _ = app.emit("notes-updated", ());
     Ok(pdf_path.to_string_lossy().to_string())
@@ -83,13 +84,19 @@ pub fn import_pdf_from_path(app: AppHandle, project: String, path: String) -> Re
         .read_to_end(&mut bytes)
         .map_err(|_| "Dosya okunamadı".to_string())?;
     let name = src.file_name().and_then(|n| n.to_str()).unwrap_or("PDF");
-    store_pdf(&app, &project, name, &bytes)
+    store_pdf(&app, &project, name, &bytes, false)
 }
 
 #[tauri::command]
-pub fn import_pdf_bytes(app: AppHandle, project: String, name: String, data_b64: String) -> Result<String, String> {
+pub fn import_pdf_bytes(
+    app: AppHandle,
+    project: String,
+    name: String,
+    data_b64: String,
+    blank: Option<bool>,
+) -> Result<String, String> {
     let bytes = STANDARD.decode(data_b64.trim()).map_err(|_| "Geçersiz PDF verisi".to_string())?;
-    store_pdf(&app, &project, &name, &bytes)
+    store_pdf(&app, &project, &name, &bytes, blank.unwrap_or(false))
 }
 
 /// Only PDFs that live inside a project folder may be touched through these commands.
