@@ -236,6 +236,19 @@ export async function importBlankPage(project: string, name: string): Promise<st
   return importPdfBytes(project, name, bytesToBase64(bytes), true);
 }
 
+/** Replaces a PNG attachment with its edited version; the first original is kept as a hidden backup. */
+export function saveEditedImage(path: string, pngBase64: string): Promise<void> {
+  return invoke("save_edited_image", { path, pngBase64 });
+}
+
+export function imageHasOriginal(path: string): Promise<boolean> {
+  return invoke("image_has_original", { path });
+}
+
+export function restoreOriginalImage(path: string): Promise<void> {
+  return invoke("restore_original_image", { path });
+}
+
 export function readPdfInk(pdfPath: string): Promise<string> {
   return invoke("read_pdf_ink", { pdfPath });
 }

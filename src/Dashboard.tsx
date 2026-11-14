@@ -290,6 +290,10 @@ export default function Dashboard() {
   // Lightbox state for full-size image viewing
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [pdfEntry, setPdfEntry] = useState<EntryMeta | null>(null);
+  const [imageEdit, setImageEdit] = useState<string | null>(null);
+  // Bumped after a picture is edited, so thumbnails and the lightbox reload it instead of using a cached copy.
+  const [imgRev, setImgRev] = useState(0);
+  const imgSrc = (p: string) => convertFileSrc(p) + (imgRev > 0 ? `?v=${imgRev}` : "");
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement>(null);
@@ -524,7 +528,7 @@ export default function Dashboard() {
   const dropHandlerRef = useRef<(paths: string[]) => void>(() => {});
   const modalOpenRef = useRef(false);
   modalOpenRef.current = Boolean(
-    editingEntry || isSettingsOpen || isMcpModalOpen || trashOpen || shareOpen || tagModalEntry || lightboxImage || pdfEntry
+    editingEntry || isSettingsOpen || isMcpModalOpen || trashOpen || shareOpen || tagModalEntry || lightboxImage || pdfEntry || imageEdit
   );
 
   function showDropToast(message: string) {
@@ -2182,7 +2186,7 @@ export default function Dashboard() {
                           {item.entry.imagePaths && item.entry.imagePaths.length > 0 && (
                             <img
                               className="entry__thumb"
-                              src={convertFileSrc(item.entry.imagePaths[0])}
+                              src={imgSrc(item.entry.imagePaths[0])}
                               alt=""
                               title={t("clickToZoom")}
                               onClick={(e) => {
@@ -2514,7 +2518,7 @@ export default function Dashboard() {
                               {entry.imagePaths.map((imgPath, imgIdx) => (
                                 <div key={imgIdx} className="devlog-item__gallery-card">
                                   <img
-                                    src={convertFileSrc(imgPath)}
+                                    src={imgSrc(imgPath)}
                                     alt=""
                                     className="devlog-item__image"
                                     onClick={(e) => {
@@ -2707,7 +2711,7 @@ export default function Dashboard() {
                   {editingEntry.imagePaths.map((imgPath, i) => (
                     <div key={i} className="modal-card__gallery-item">
                       <img
-                        src={convertFileSrc(imgPath)}
+                        src={imgSrc(imgPath)}
                         alt={t("imageAlt")(i + 1)}
                         className="modal-card__gallery-image"
                         onClick={() => setLightboxImage(imgPath)}
@@ -2803,10 +2807,21 @@ export default function Dashboard() {
         >
           <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
             <img
-              src={convertFileSrc(lightboxImage)}
+              src={imgSrc(lightboxImage)}
               alt={t("screenshotFullAlt")}
               className="lightbox-image"
             />
+            <button
+              type="button"
+              className="lightbox-draw-btn"
+              onClick={() => {
+                setImageEdit(lightboxImage);
+                setLightboxImage(null);
+              }}
+              title={t("imgDraw")}
+            >
+              ✎ {t("imgDraw")}
+            </button>
             <button
               type="button"
               className="lightbox-close-btn"
@@ -3636,6 +3651,24 @@ export default function Dashboard() {
         </div>
       )}
       {dropToast && <div className="drop-toast">{dropToast}</div>}
+
+      {imageEdit && (
+        <Suspense fallback={<div className="pdf-viewer"><div className="pdf-viewer__empty">{t("pdfLoading")}</div></div>}>
+          <PdfAnnotator
+            imageMode
+            entry={{ id: imageEdit, name: imageEdit, path: imageEdit, imagePaths: [], kind: "image", modified: Date.now(), pinned: false }}
+            lang={lang}
+            onImageSaved={() => {
+              setImgRev((r) => r + 1);
+              void refreshEntries(active, true);
+            }}
+            onClose={() => {
+              setImageEdit(null);
+              void refreshEntries(active, true);
+            }}
+          />
+        </Suspense>
+      )}
 
       {pdfEntry && (
         <Suspense fallback={<div className="pdf-viewer"><div className="pdf-viewer__empty">{t("pdfLoading")}</div></div>}>

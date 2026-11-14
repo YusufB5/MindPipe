@@ -13,6 +13,7 @@ use tauri_plugin_opener::OpenerExt;
 
 mod bundle;
 mod dropfile;
+mod imageedit;
 mod pdf;
 
 const CAPTURE_SHORTCUT: &str = "Ctrl+Shift+N";
@@ -1467,6 +1468,7 @@ fn delete_image_file(app: AppHandle, path: String) -> Result<(), String> {
     if p.exists() {
         fs::remove_file(p).map_err(|e| e.to_string())?;
     }
+    imageedit::remove_backup(p);
     let _ = app.emit("notes-updated", ());
     Ok(())
 }
@@ -1518,6 +1520,7 @@ fn delete_entry(app: AppHandle, path: String, image_paths: Option<Vec<String>>) 
             if ip.exists() {
                 let _ = fs::remove_file(ip);
             }
+            imageedit::remove_backup(ip);
         }
     }
     if p.extension().and_then(|e| e.to_str()).map_or(false, |e| e.eq_ignore_ascii_case("pdf")) {
@@ -2262,6 +2265,9 @@ pub fn run() {
             get_startup_settings,
             set_startup_settings,
             dropfile::read_dropped_file,
+            imageedit::save_edited_image,
+            imageedit::image_has_original,
+            imageedit::restore_original_image,
             pdf::import_pdf_from_path,
             pdf::import_pdf_bytes,
             pdf::read_pdf_ink,

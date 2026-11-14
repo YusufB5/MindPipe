@@ -9,6 +9,9 @@ import {
   drawStroke,
   exportAnnotatedPdf,
   HIGHLIGHT_ALPHA,
+  imageHasOriginal,
+  restoreOriginalImage,
+  saveEditedImage,
   handleAt,
   hitStroke,
   moveStroke,
@@ -124,7 +127,9 @@ const HANDLE_SIZE = 9;
 const HANDLE_REACH = 11;
 
 interface PdfPageProps {
-  doc: PDFDocumentProxy;
+  doc: PDFDocumentProxy | null;
+  /** Image mode: this picture is the page background instead of a PDF page */
+  image?: ImageBitmap | null;
   index: number;
   cssWidth: number;
   /** height / width of the page */
@@ -175,6 +180,17 @@ function PdfPage(props: PdfPageProps) {
     let task: RenderTask | null = null;
     (async () => {
       try {
+        if (props.image) {
+          const canvas = pdfCanvasRef.current;
+          const ctx = canvas?.getContext("2d");
+          if (!canvas || !ctx) return;
+          canvas.width = pxW;
+          canvas.height = pxH;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(props.image, 0, 0, pxW, pxH);
+          return;
+        }
+        if (!doc) return;
         const page = await doc.getPage(index + 1);
         if (cancelled) return;
         const base = page.getViewport({ scale: 1 });
@@ -194,7 +210,7 @@ function PdfPage(props: PdfPageProps) {
       cancelled = true;
       task?.cancel();
     };
-  }, [visible, doc, index, pxW]);
+  }, [visible, doc, index, pxW, props.image]);
 
   // Committed strokes
   useEffect(() => {
@@ -466,7 +482,7 @@ interface HistoryItem {
   after: Stroke[];
 }
 
-type IconName = "pen" | "highlighter" | "eraser" | "select" | "hand" | "trash" | "undo" | "redo" | "download" | "close" | "grip";
+type IconName = "pen" | "highlighter" | "eraser" | "select" | "hand" | "trash" | "undo" | "redo" | "download" | "close" | "grip" | "save" | "revert";
 
 const ICON_PATHS: Record<IconName, React.ReactNode> = {
   pen: (
@@ -523,6 +539,19 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
       <path d="M12 15V3" />
     </>
   ),
+  save: (
+    <>
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <path d="M17 21v-8H7v8" />
+      <path d="M7 3v5h8" />
+    </>
+  ),
+  revert: (
+    <>
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+    </>
+  ),
   grip: (
     <>
       <circle cx="9" cy="6" r="1" />
@@ -549,9 +578,25 @@ function Icon({ name }: { name: IconName }) {
   );
 }
 
-export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMeta; lang: Language; onClose: () => void }) {
+export default function PdfAnnotator({
+  entry,
+  lang,
+  onClose,
+  imageMode = false,
+  onImageSaved,
+}: {
+  entry: EntryMeta;
+  lang: Language;
+  onClose: () => void;
+  /** Draw on a PNG attachment (entry.path) instead of a PDF; saving bakes the drawing into the picture. */
+  imageMode?: boolean;
+  onImageSaved?: () => void;
+}) {
   const tr = translations[lang];
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
+  const [img, setImg] = useState<ImageBitmap | null>(null);
+  const [unsaved, setUnsaved] = useState(false);
+  const [hasOriginal, setHasOriginal] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [aspects, setAspects] = useState<number[]>([]);
   const [tool, setTool] = useState<Tool>("pen");
@@ -591,14 +636,34 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
   const messageTimer = useRef<number | undefined>(undefined);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  const pdfUrl = useMemo(() => convertFileSrc(entry.path), [entry.path]);
-  const title = inkRef.current.name || entry.preview || entry.name;
+  // A fresh query string every open, so an edited picture is never served from a stale cache.
+  const pdfUrl = useMemo(() => convertFileSrc(entry.path) + (imageMode ? `?t=${Date.now()}` : ""), [entry.path, imageMode]);
+  const title = imageMode ? entry.path.split(/[\\/]/).pop() ?? entry.name : inkRef.current.name || entry.preview || entry.name;
 
   // ----- load the PDF (pdf.js is only fetched when a PDF is opened)
   useEffect(() => {
     let cancelled = false;
     let loaded: PDFDocumentProxy | null = null;
     (async () => {
+      if (imageMode) {
+        try {
+          inkLoaded.current = true;
+          const res = await fetch(pdfUrl);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const bmp = await createImageBitmap(await res.blob());
+          if (cancelled) {
+            bmp.close();
+            return;
+          }
+          setImg(bmp);
+          setAspects([bmp.height / bmp.width]);
+          setRev((r) => r + 1);
+          imageHasOriginal(entry.path).then(setHasOriginal).catch(() => {});
+        } catch (err) {
+          if (!cancelled) setLoadError(`${tr.pdfLoadError}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        return;
+      }
       try {
         const [pdfjs, worker, inkJson] = await Promise.all([
           import("pdfjs-dist/legacy/build/pdf.mjs"),
@@ -649,9 +714,11 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
     return () => ro.disconnect();
   }, [scrollerEl]);
 
-  const cssWidth = Math.round(Math.max(280, viewWidth - 40) * zoom);
+  // A small picture is shown at its own size instead of being blown up to the window width.
+  const fitWidth = Math.max(280, viewWidth - 40);
+  const cssWidth = Math.round((imageMode && img ? Math.min(fitWidth, img.width) : fitWidth) * zoom);
   const firstAspect = aspects[0] ?? 1.414;
-  const numPages = doc?.numPages ?? 0;
+  const numPages = imageMode ? (img ? 1 : 0) : doc?.numPages ?? 0;
 
   function updateCurrentPage() {
     const sc = scrollerEl;
@@ -673,7 +740,7 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
   }
 
   const doSave = useCallback(async () => {
-    if (!inkLoaded.current) return;
+    if (!inkLoaded.current || imageMode) return;
     window.clearTimeout(saveTimer.current);
     dirty.current = false;
     setSaveState("saving");
@@ -688,6 +755,10 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
 
   function scheduleSave() {
     dirty.current = true;
+    if (imageMode) {
+      setUnsaved(true);
+      return;
+    }
     setSaveState("saving");
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => void doSave(), 700);
@@ -767,6 +838,11 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
   }
 
   async function handleClose() {
+    if (imageMode) {
+      if (dirty.current && !window.confirm(tr.imgDiscardConfirm)) return;
+      onClose();
+      return;
+    }
     if (dirty.current) await doSave();
     // A blank page nobody drew on is not worth keeping in the project.
     const ink = inkRef.current;
@@ -830,12 +906,17 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
   escapeRef.current = () => (colorMenu ? setColorMenu(null) : selection ? setSelection(null) : void handleClose());
   const deleteRef = useRef(deleteSelected);
   deleteRef.current = deleteSelected;
+  const saveImageRef = useRef<() => void>(() => {});
+  saveImageRef.current = () => void handleSaveImage();
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
         escapeRef.current();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (imageMode) saveImageRef.current();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         deleteRef.current();
@@ -858,7 +939,7 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
   // Last resort: a save that is still pending when the viewer unmounts is written out.
   useEffect(() => {
     return () => {
-      if (dirty.current && inkLoaded.current) void savePdfInk(entry.path, serializeInk(inkRef.current)).catch(() => {});
+      if (!imageMode && dirty.current && inkLoaded.current) void savePdfInk(entry.path, serializeInk(inkRef.current)).catch(() => {});
     };
   }, [entry.path]);
 
@@ -887,6 +968,74 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
     if (panRef.current?.id === e.pointerId) {
       panRef.current = null;
       setPanning(false);
+    }
+  }
+
+  // ----- picture mode: bake the strokes into the PNG itself
+  async function reloadPicture(blob?: Blob) {
+    let source = blob;
+    if (!source) {
+      const res = await fetch(`${convertFileSrc(entry.path)}?t=${Date.now()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      source = await res.blob();
+    }
+    const bmp = await createImageBitmap(source);
+    setImg(bmp);
+    setAspects([bmp.height / bmp.width]);
+    inkRef.current = emptyInk();
+    undoStack.current = [];
+    redoStack.current = [];
+    dirty.current = false;
+    setUnsaved(false);
+    setCanUndo(false);
+    setCanRedo(false);
+    setSelection(null);
+    setRev((r) => r + 1);
+  }
+
+  async function handleSaveImage() {
+    if (!img || exportState === "busy") return;
+    setExportState("busy");
+    try {
+      const W = img.width;
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("canvas unavailable");
+      ctx.drawImage(img, 0, 0);
+      const strokes = getStrokes(0);
+      // Highlighters multiply with the picture (like on screen), pen strokes go on top of them.
+      for (const s of strokes.filter((st) => st.h)) {
+        ctx.save();
+        ctx.globalCompositeOperation = "multiply";
+        drawStroke(ctx, s, W);
+        ctx.restore();
+      }
+      for (const s of strokes.filter((st) => !st.h)) drawStroke(ctx, s, W);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!blob) throw new Error("PNG encode failed");
+      await saveEditedImage(entry.path, bytesToBase64(new Uint8Array(await blob.arrayBuffer())));
+      await reloadPicture(blob);
+      setHasOriginal(true);
+      onImageSaved?.();
+      flashMessage(tr.imgSaved);
+    } catch (err) {
+      flashMessage(`${tr.pdfSaveError}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExportState("idle");
+    }
+  }
+
+  async function handleRevertImage() {
+    if (!window.confirm(tr.imgRevertConfirm)) return;
+    try {
+      await restoreOriginalImage(entry.path);
+      await reloadPicture();
+      setHasOriginal(false);
+      onImageSaved?.();
+    } catch (err) {
+      flashMessage(`${tr.pdfSaveError}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -1121,6 +1270,23 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
         <button type="button" className="pdf-viewer__btn" onClick={() => void handleClose()} title={tr.pdfClose} aria-label={tr.pdfClose}>
           <Icon name="close" />
         </button>
+        {imageMode && (
+          <button
+            type="button"
+            className={`pdf-viewer__btn pdf-viewer__btn--save ${unsaved ? "pdf-viewer__btn--save-ready" : ""}`}
+            onClick={() => void handleSaveImage()}
+            disabled={!img || !unsaved || exportState === "busy"}
+            title={`${tr.imgSave} (Ctrl+S)`}
+            aria-label={tr.imgSave}
+          >
+            <Icon name="save" />
+          </button>
+        )}
+        {imageMode && hasOriginal && (
+          <button type="button" className="pdf-viewer__btn" onClick={() => void handleRevertImage()} title={tr.imgRevert} aria-label={tr.imgRevert}>
+            <Icon name="revert" />
+          </button>
+        )}
         </div>
         <span className="pdf-viewer__title" title={title}>
           {title}
@@ -1226,27 +1392,31 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
 
         <span className="pdf-viewer__spacer" />
         <div className="pdf-viewer__group pdf-viewer__group--tail">
-        {numPages > 0 && (
+        {!imageMode && numPages > 0 && (
           <span className="pdf-viewer__status" title={tr.pdfPageOf(currentPage, numPages)}>
             {currentPage} / {numPages}
           </span>
         )}
-        <span
-          className={`pdf-viewer__status pdf-viewer__save pdf-viewer__status--${saveState}`}
-          title={saveState === "saving" ? tr.pdfSaving : saveState === "saved" ? tr.pdfSaved : saveState === "error" ? tr.pdfSaveError : ""}
-        >
-          {saveState === "saving" ? "…" : saveState === "saved" ? "✓" : saveState === "error" ? "!" : ""}
-        </span>
-        <button
-          type="button"
-          className="pdf-viewer__btn pdf-viewer__btn--export"
-          onClick={() => void handleExport()}
-          disabled={!doc || exportState === "busy"}
-          title={exportState === "busy" ? tr.pdfExporting : tr.pdfExport}
-          aria-label={tr.pdfExport}
-        >
-          <Icon name="download" />
-        </button>
+        {!imageMode && (
+          <span
+            className={`pdf-viewer__status pdf-viewer__save pdf-viewer__status--${saveState}`}
+            title={saveState === "saving" ? tr.pdfSaving : saveState === "saved" ? tr.pdfSaved : saveState === "error" ? tr.pdfSaveError : ""}
+          >
+            {saveState === "saving" ? "…" : saveState === "saved" ? "✓" : saveState === "error" ? "!" : ""}
+          </span>
+        )}
+        {!imageMode && (
+          <button
+            type="button"
+            className="pdf-viewer__btn pdf-viewer__btn--export"
+            onClick={() => void handleExport()}
+            disabled={!doc || exportState === "busy"}
+            title={exportState === "busy" ? tr.pdfExporting : tr.pdfExport}
+            aria-label={tr.pdfExport}
+          >
+            <Icon name="download" />
+          </button>
+        )}
         </div>
       </div>
 
@@ -1263,14 +1433,15 @@ export default function PdfAnnotator({ entry, lang, onClose }: { entry: EntryMet
       >
         {loadError ? (
           <div className="pdf-viewer__empty">{loadError}</div>
-        ) : !doc ? (
+        ) : (imageMode ? !img : !doc) ? (
           <div className="pdf-viewer__empty">{tr.pdfLoading}</div>
         ) : (
           <div className="pdf-viewer__pages">
-            {Array.from({ length: doc.numPages }, (_, i) => (
+            {Array.from({ length: numPages }, (_, i) => (
               <div key={i} ref={(el) => (pageRefs.current[i] = el)}>
                 <PdfPage
                   doc={doc}
+                  image={img}
                   index={i}
                   cssWidth={cssWidth}
                   aspect={aspects[i] ?? firstAspect}

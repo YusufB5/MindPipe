@@ -4920,3 +4920,44 @@ body.is-reordering-cards * {
     display: none;
   }
 }
+
+/* ---- drawing on a picture */
+.lightbox-draw-btn {
+  position: absolute;
+  top: -12px;
+  right: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.lightbox-draw-btn:hover {
+  background: var(--surface-hover);
+  color: #fff;
+}
+
+.pdf-viewer__unsaved {
+  color: #f59e0b;
+  font-size: 14px;
+}
+
+/* picture mode: the save button sits at the top of the toolbar and lights up when there is something to save */
+.pdf-viewer__btn--save-ready {
+  background: var(--spine);
+  border-color: var(--spine);
+  color: #111;
+}
+
+.pdf-viewer__btn--save-ready:hover:not(:disabled) {
+  background: var(--spine);
+  filter: brightness(1.1);
+}
