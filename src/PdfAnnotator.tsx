@@ -640,6 +640,9 @@ export default function PdfAnnotator({
   const pdfUrl = useMemo(() => convertFileSrc(entry.path) + (imageMode ? `?t=${Date.now()}` : ""), [entry.path, imageMode]);
   const title = imageMode ? entry.path.split(/[\\/]/).pop() ?? entry.name : inkRef.current.name || entry.preview || entry.name;
 
+  // A replaced (or unmounted) picture's bitmap is released, so repeated saves do not pile up decoded copies.
+  useEffect(() => () => img?.close(), [img]);
+
   // ----- load the PDF (pdf.js is only fetched when a PDF is opened)
   useEffect(() => {
     let cancelled = false;
@@ -754,11 +757,15 @@ export default function PdfAnnotator({
   }, [entry.path]);
 
   function scheduleSave() {
-    dirty.current = true;
     if (imageMode) {
-      setUnsaved(true);
+      // Saved strokes are baked into the picture and cleared, so whatever is still on the page is unsaved.
+      // Undoing (or erasing) back to an empty page therefore leaves nothing to save.
+      const pending = (inkRef.current.pages["0"] ?? []).length > 0;
+      dirty.current = pending;
+      setUnsaved(pending);
       return;
     }
+    dirty.current = true;
     setSaveState("saving");
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => void doSave(), 700);
