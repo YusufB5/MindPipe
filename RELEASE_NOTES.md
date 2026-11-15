@@ -1,5 +1,5 @@
-- New: PDF support. Add PDFs with the "+ PDF" button or by dropping them on the window, then annotate them with a pen, highlighter and eraser. Works with drawing tablets, including pen pressure.
-- Select a stroke to move, resize, rotate or recolour it, or press Delete to remove it. Drawings save automatically next to the PDF; the original file is never changed.
-- "Download annotated PDF" saves a copy with your drawings baked in (to your Downloads folder).
-- PDFs and their drawings are included when you share or sync a project.
-- Tip: if pen pressure does not work with your tablet, turn on Windows Ink in the tablet driver settings.
+- New: draw on pictures. Click a picture to open it, then "Draw on it" to use the pen, highlighter and eraser on it. Saving (button or Ctrl+S) bakes the drawing into the picture. The first original is kept, so "Restore the original" can always take you back.
+- PDF toolbar can be dragged, docked to any edge or left floating as a compact panel; its position is remembered.
+- New colour menu with presets and a custom colour, plus four quick colours per tool. Thickness buttons have their own row.
+- "+ PDF" now also offers "Blank page": an empty A4 page to write on. A blank page you close without drawing on is removed.
+- Works better in small windows: the toolbar wraps, and the project name hides when there is no room for it.
